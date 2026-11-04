@@ -20,13 +20,26 @@ jobs:
           distribution: "temurin"
       - uses: gradle/actions/setup-gradle@v5
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace --warning-mode all
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace --warning-mode all --console=plain 2>&1 | tee build-output.log
+      - name: Surface compile errors as annotations
+        if: failure()
+        run: |
+          grep -aE "^(e: |error: |FAILURE: |Caused by: |What went wrong:|Execution failed for task|AaptException)" build-output.log \
+            | sort -u | head -40 | cut -c1-400 \
+            | while IFS= read -r line; do echo "::error::$line"; done
+          echo "----- build-output.log (tail 60) -----"
+          tail -n 60 build-output.log
       - name: Upload build logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: build/outputs/logs/
+          path: |
+            build-output.log
+            app/build/reports/
+            build/reports/
           if-no-files-found: warn
           retention-days: 7
 
@@ -40,7 +53,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: AI CI Healer
-        uses: mariorazo97/ai-ci-healer@v1
+        uses: mariorazo97/ai-ci-healer@v1.0.0
+        continue-on-error: true
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           llm-provider: "gemini"
