@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  只读无障碍服务配置。
+
+  硬性边界（与 PRD 第一章一致）：
+  * canRetrieveWindowContent = true        —— 仅读取窗口节点树
+  * canPerformGestures        不声明       —— 不具备手势/输入能力
+  * canTakeScreenshot         不声明       —— 不使用无障碍截屏
+  * 事件类型仅 TYPE_WINDOW_STATE_CHANGED 与 TYPE_WINDOW_CONTENT_CHANGED
+  * flags 包含 FLAG_REPORT_VIEW_IDS
+
+  注意：本文件刻意不包含任何可写能力开关。
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="100"
+    android:packageNames="com.tencent.mm"
+    android:settingsActivity="com.tencent.mm.assistant.settings.SettingsActivity"
+    android:summary="@string/accessibility_service_summary" />

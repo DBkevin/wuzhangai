@@ -1,0 +1,263 @@
+package com.tencent.mm.assistant.core
+
+import android.graphics.Rect
+import android.view.accessibility.AccessibilityNodeInfo
+
+/**
+ * 「当前窗口是不是微信单聊界面」的判定器，并负责提取标题 / 消息。
+ *
+ * 判定顺序（全部为只读观察）：
+ *  1. 包名必须是 com.tencent.mm（调用方先行判断，这里再兜一层）。
+ *  2. 屏幕顶部 30% 区域内必须"恰好存在一个"候选标题文本节点 —— 多于一个说明是群聊/公众号
+ *     等多标题界面或聊天列表，直接放弃；等于零个说明标题读取失败（title=null）。
+ *  3. 标题形态排除：群聊（形如 `名称(12)` / `名称[12]`）、服务号/公众号常见后缀（"服务号"、"订阅号"）、
+ *     朋友圈入口（"朋友圈"）等。
+ *  4. 页面中必须存在"消息列表容器"：面积占屏幕比例高、子节点多、类名含 RecyclerView/ListView，
+ *     或位于屏幕中部大片区域的大容器。找不到 -> 判为非单聊（可能是聊天列表页或设置页）。
+ *
+ * 该类的所有方法都只做只读观察（text / 类名 / 位置 / 子节点遍历），
+ * 不包含任何写入或手势注入调用。
+ */
+object ChatScreenDetector {
+
+    const val WECHAT_PACKAGE = "com.tencent.mm"
+
+    /** 标题候选所在的顶部区域占比。 */
+    private const val TITLE_REGION_TOP_RATIO = 0.06f
+    private const val TITLE_REGION_BOTTOM_RATIO = 0.30f
+
+    /** 标题候选的水平中心允许范围（微信标题是居中的）。 */
+    private const val TITLE_CENTER_MIN_RATIO = 0.25f
+    private const val TITLE_CENTER_MAX_RATIO = 0.75f
+
+    /** 标题长度上限，超过基本是正文而不是标题。 */
+    private const val MAX_TITLE_LENGTH = 32
+
+    /** 消息容器至少要占屏幕高度这么大。 */
+    private const val MESSAGE_CONTAINER_MIN_HEIGHT_RATIO = 0.35f
+    private const val MESSAGE_CONTAINER_MIN_CHILDREN = 2
+
+    private val GROUP_TITLE_REGEX = Regex(""".*[\(\[（【]\s*\d+\s*[\)\]）】]\s*$""")
+
+    /** 这些文本出现在顶部区域时，说明不是普通单聊界面。 */
+    private val NON_SINGLE_CHAT_TITLE_EXACTS = setOf(
+        "微信", "通讯录", "发现", "我", "朋友圈", "聊天信息", "搜索",
+        "订阅号消息", "服务通知", "微信团队", "新的朋友", "群聊", "标签",
+        "收藏", "相册", "卡包", "表情", "设置",
+    )
+
+    private val NON_SINGLE_CHAT_TITLE_SUFFIXES = listOf(
+        "服务号", "订阅号", "公众号", "企业微信",
+    )
+
+    // ---------------------------------------------------------------- 顶层判定
+
+    fun detect(
+        root: NodeTree,
+        screen: Rect,
+        maxMessages: Int,
+    ): ExtractResult {
+        if (screen.width() <= 0 || screen.height() <= 0) return ExtractResult.NotSingleChat
+
+        val title = findTitleText(root, screen)
+        val container = findMessageContainer(root, screen)
+
+        if (container == null) {
+            // 没有消息列表容器：聊天列表页 / 详情页 / 朋友圈等，一律跳过。
+            return ExtractResult.NotSingleChat
+        }
+
+        // 标题缺失：属"单聊界面成立但读取失败"，按 PRD 要求 title=null + partial。
+        if (title == null) {
+            val messages = extractMessages(container, maxMessages)
+            return ExtractResult.TitleUnreadable(
+                recentMessages = messages,
+                sessionKey = SESSION_KEY_UNKNOWN,
+            )
+        }
+
+        // 群聊 / 公众号 / 服务号 等一律跳过（判定放在标题拿到之后，避免误伤）。
+        if (isNonSingleChatTitle(title)) return ExtractResult.NotSingleChat
+
+        val messages = extractMessages(container, maxMessages)
+        val messageNodesPresent = countTextCandidateNodes(container) > 0
+
+        // 消息节点被混淆：树里有节点但取不到任何文本 -> 只回传标题。
+        if (messages.isEmpty() && !messageNodesPresent) {
+            return ExtractResult.MessagesObfuscated(
+                title = title,
+                sessionKey = sessionKeyOf(title),
+            )
+        }
+
+        return ExtractResult.Success(
+            title = title,
+            recentMessages = messages,
+            sessionKey = sessionKeyOf(title),
+        )
+    }
+
+    fun sessionKeyOf(title: String?): String =
+        title?.takeIf { it.isNotBlank() } ?: SESSION_KEY_UNKNOWN
+
+    const val SESSION_KEY_UNKNOWN = "__unknown_title__"
+
+    // ---------------------------------------------------------------- 标题
+
+    /**
+     * 在顶部区域找"唯一"的候选标题。
+     *
+     * 微信单聊标题栏结构稳定：一个居中的 TextView。群聊标题形如 `名称(12)`，
+     * 公众号/服务号标题通常带后缀，且这类界面顶部往往还有其它文本（如"关注"），
+     * 因此"候选数量 > 1 即放弃"这条既保守又有效。
+     */
+    fun findTitleText(root: NodeTree, screen: Rect): String? {
+        val top = screen.top + (screen.height() * TITLE_REGION_TOP_RATIO).toInt()
+        val bottom = screen.top + (screen.height() * TITLE_REGION_BOTTOM_RATIO).toInt()
+        val minCenterX = screen.left + (screen.width() * TITLE_CENTER_MIN_RATIO).toInt()
+        val maxCenterX = screen.left + (screen.width() * TITLE_CENTER_MAX_RATIO).toInt()
+
+        val candidates = ArrayList<String>(4)
+        root.forEachNode { node, _ ->
+            val raw = node.text?.toString()?.trim().orEmpty()
+            if (raw.isEmpty()) return@forEachNode
+            if (raw.length > MAX_TITLE_LENGTH) return@forEachNode
+            if (!node.isVisibleToUser) return@forEachNode
+
+            val b = node.bounds
+            if (b.height() <= 0 || b.width() <= 0) return@forEachNode
+            val centerY = b.centerY()
+            if (centerY < top || centerY > bottom) return@forEachNode
+
+            val centerX = b.centerX()
+            if (centerX < minCenterX || centerX > maxCenterX) return@forEachNode
+
+            // 纯时间/电量等状态栏噪声
+            if (StatusBarFilter.isStatusBarNoise(raw)) return@forEachNode
+            // 过滤掉本身就是整段正文的节点
+            if (raw.length > MAX_TITLE_LENGTH) return@forEachNode
+
+            if (!candidates.contains(raw)) candidates.add(raw)
+        }
+
+        if (candidates.size != 1) return null
+        return candidates.first()
+    }
+
+    fun isNonSingleChatTitle(title: String): Boolean {
+        val t = title.trim()
+        if (t.isEmpty()) return true
+        if (NON_SINGLE_CHAT_TITLE_EXACTS.contains(t)) return true
+        if (GROUP_TITLE_REGEX.matches(t)) return true
+        if (NON_SINGLE_CHAT_TITLE_SUFFIXES.any { t.endsWith(it) }) return true
+        // "(12)" 这类纯人数括注
+        if (Regex("""^[\(\[（【]\s*\d+\s*[\)\]）】]$""").matches(t)) return true
+        return false
+    }
+
+    // ---------------------------------------------------------------- 消息容器
+
+    /**
+     * 找消息列表容器：优先类名含 RecyclerView/ListView 且竖向占据屏幕中部大片区域的大节点；
+     * 退化为"高度占比足够且子节点数达标"的最大节点。
+     */
+    fun findMessageContainer(root: NodeTree, screen: Rect): NodeTree? {
+        val minHeight = (screen.height() * MESSAGE_CONTAINER_MIN_HEIGHT_RATIO).toInt()
+
+        var best: NodeTree? = null
+        var bestScore = 0
+
+        root.forEachNode { node, depth ->
+            // 标题栏本身在顶部，跳过过浅的节点
+            if (depth < 2) return@forEachNode
+            if (!node.isVisibleToUser) return@forEachNode
+            if (node.childCount < MESSAGE_CONTAINER_MIN_CHILDREN) return@forEachNode
+
+            val b = node.bounds
+            if (b.height() < minHeight) return@forEachNode
+            // 消息区必须在中部偏下，避免把整页根节点当成容器
+            if (b.top < screen.top) return@forEachNode
+
+            val cls = node.className.orEmpty()
+            var score = b.height()
+            if (cls.contains("RecyclerView")) score += screen.height()
+            else if (cls.contains("ListView")) score += screen.height() / 2
+
+            if (score > bestScore) {
+                bestScore = score
+                best = node
+            }
+        }
+
+        return best
+    }
+
+    // ---------------------------------------------------------------- 消息
+
+    /**
+     * 从容器中按可见顺序取文本节点，过滤时间戳 / 系统提示 / 表情占位符。
+     */
+    fun extractMessages(container: NodeTree, maxMessages: Int): List<String> {
+        if (maxMessages <= 0) return emptyList()
+
+        val ordered = ArrayList<String>(maxMessages * 3)
+        container.forEachNode { node, _ ->
+            val raw = node.text?.toString()?.trim().orEmpty()
+            if (raw.isEmpty()) return@forEachNode
+            val cls = node.className.orEmpty()
+            // 只取文本类节点，避免把容器的 contentDescription 当消息
+            if (cls.isNotEmpty() && !cls.contains("TextView") && !cls.contains("EditText")) {
+                return@forEachNode
+            }
+            if (!MessageTextFilter.isDisplayableMessage(raw)) return@forEachNode
+            ordered.add(raw)
+        }
+
+        // 连续重复去重（列表项复用可能产生同一文本的多个节点）
+        val deduped = ArrayList<String>(ordered.size)
+        for (item in ordered) {
+            if (deduped.isNotEmpty() && deduped.last() == item) continue
+            deduped.add(item)
+        }
+
+        // 取最近 N 条：可见顺序为旧 -> 新，因此取尾部
+        return if (deduped.size <= maxMessages) deduped else deduped.subList(deduped.size - maxMessages, deduped.size).toList()
+    }
+
+    /**
+     * 统计容器内"像是消息文本但取不到文本"的节点数量。
+     *
+     * 微信混淆后节点仍然存在（有 View、有位置），但 text 为空；
+     * 若树里连一个文本类节点都没有，则视为被混淆，read_status=partial。
+     */
+    fun countTextCandidateNodes(container: NodeTree): Int {
+        var count = 0
+        container.forEachNode { node, _ ->
+            val cls = node.className.orEmpty()
+            if (cls.contains("TextView")) {
+                val t = node.text?.toString()?.trim().orEmpty()
+                if (t.isNotEmpty()) count++
+            }
+        }
+        return count
+    }
+
+    // ---------------------------------------------------------------- 工具
+
+    /** 从聊天列表首页/会话列表里抓微信号的上层界面判定用：仅做"是否在'我'页"判断。 */
+    fun looksLikeProfilePage(root: NodeTree, screen: Rect): Boolean {
+        var hasId = false
+        var hasQrOrMore = false
+        root.forEachNode { node, _ ->
+            val t = node.text?.toString()?.trim().orEmpty()
+            if (t.isEmpty()) return@forEachNode
+            if (t.startsWith("微信号") || t.matches(Regex("""^wxid_[A-Za-z0-9_-]+$"""))) hasId = true
+            if (t == "朋友圈" || t == "收藏" || t == "拍一拍" || t == "服务") hasQrOrMore = true
+        }
+        return hasId || hasQrOrMore
+    }
+
+    /** 兼容旧入口：直接给 AccessibilityNodeInfo 的调用点。 */
+    fun detect(node: AccessibilityNodeInfo, screen: Rect, maxMessages: Int): ExtractResult =
+        detect(AccessibilityNodeTree(node), screen, maxMessages)
+}

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 简单对话气泡图标：纯 vector，避免引入任何二进制资源。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#1B1B1B"
+        android:pathData="M8,6 h32 a4,4 0 0 1 4,4 v22 a4,4 0 0 1 -4,4 h-20 l-9,8 v-8 h-3 a4,4 0 0 1 -4,-4 v-22 a4,4 0 0 1 4,-4 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M14,16 h20 v3 h-20 z M14,22 h14 v3 h-14 z" />
+</vector>

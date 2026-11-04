@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  中控多为内网 HTTP 地址（如 http://10.0.0.5:8080/ingest），因此必须显式允许明文流量。
+  生产环境请把中控换成 HTTPS，并把 clearTextTrafficPermitted 收回为 false。
+  这里不信任任何用户证书，也不做证书固定，避免"看似安全实则放宽"的误解。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

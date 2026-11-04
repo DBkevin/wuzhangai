@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 仅使用 AppCompat 基础主题，避免引入 Material 组件族带来的额外构建风险。 -->
+    <style name="Theme.KfAssistant" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:statusBarColor">#FF1B1B1B</item>
+        <item name="android:windowBackground">#FFF7F7F7</item>
+    </style>
+</resources>

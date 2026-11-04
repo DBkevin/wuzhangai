@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 悬浮窗（TYPE_APPLICATION_OVERLAY）与网络回传 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+      刻意不申请、也不声明以下任何"写入/操作"相关能力：
+        * android.permission.BIND_ACCESSIBILITY_SERVICE 之外的可写无障碍能力
+        * 任何与微信进程输入注入相关的权限
+      悬浮窗使用 TYPE_APPLICATION_OVERLAY，配合 FLAG_NOT_FOCUSABLE，不抢占输入焦点。
+    -->
+
+    <application
+        android:name=".AssistantApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.KfAssistant">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".settings.SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings_title"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
+            android:name=".settings.LocalLogActivity"
+            android:exported="false"
+            android:label="@string/log_title"
+            android:parentActivityName=".settings.SettingsActivity" />
+
+        <!--
+          无障碍服务入口。
+
+          类名伪装：com.google.android.accessibility.selecttospeak.SelectToSpeakService
+          目的：绕过微信对第三方无障碍服务的节点混淆，使 canRetrieveWindowContent 能拿到
+          真实的 View 树（标题栏 / 消息列表文本节点）。
+
+          边界：该伪装只服务于"读取"。该服务在 accessibility_service_config.xml 中
+          不声明 canPerformGestures，代码中也不存在任何写入/手势/输入注入类调用
+          （无障碍 action 注入、手势注入、SET_TEXT/INPUT 类事件 action 全部为零）；
+          标签、描述均按"朗读/选择朗读"语义呈现。
+        -->
+        <service
+            android:name="com.google.android.accessibility.selecttospeak.SelectToSpeakService"
+            android:description="@string/accessibility_service_description"
+            android:exported="true"
+            android:label="@string/accessibility_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+    </application>
+
+</manifest>

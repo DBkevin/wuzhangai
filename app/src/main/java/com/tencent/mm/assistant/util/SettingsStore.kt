@@ -1,0 +1,143 @@
+package com.tencent.mm.assistant.util
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.provider.Settings
+import java.security.MessageDigest
+
+/**
+ * 设置持久化。
+ *
+ * 只保存"配置"，不保存任何聊天内容：
+ *  中控地址 / 客服账号别名 / N / OCR 开关 / 本地日志开关 / device_id 派生值。
+ *  当前会话消息永远只在内存中，会话切换即清空。
+ */
+class SettingsStore(context: Context) {
+
+    private val appContext = context.applicationContext
+    private val prefs: SharedPreferences =
+        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    // ------------------------------------------------------------ 中控
+
+    /** 上报接口地址，例如 http://10.0.0.5:8080/ingest 。 */
+    var centerUrl: String
+        get() = prefs.getString(KEY_CENTER_URL, "").orEmpty().trim()
+        set(value) = prefs.edit().putString(KEY_CENTER_URL, value.trim()).apply()
+
+    /**
+     * 反馈接口地址。
+     * 默认从中控地址派生：同源 + /feedback；也允许显式覆盖。
+     */
+    var feedbackUrlOverride: String
+        get() = prefs.getString(KEY_FEEDBACK_URL, "").orEmpty().trim()
+        set(value) = prefs.edit().putString(KEY_FEEDBACK_URL, value.trim()).apply()
+
+    val feedbackUrl: String
+        get() {
+            val override = feedbackUrlOverride
+            if (override.isNotBlank()) return override
+            return deriveFeedbackUrl(centerUrl)
+        }
+
+    // ------------------------------------------------------------ 客服账号
+
+    /**
+     * 客服账号别名（设备上手动填写一次）。
+     * 微信号可从微信「我」页读取并缓存，见 [cachedWechatId]。
+     */
+    var serviceAlias: String
+        get() = prefs.getString(KEY_SERVICE_ALIAS, "").orEmpty().trim()
+        set(value) = prefs.edit().putString(KEY_SERVICE_ALIAS, value.trim()).apply()
+
+    /** 从微信「我」页读取到的微信号缓存（仅此一个标识，非聊天内容）。 */
+    var cachedWechatId: String
+        get() = prefs.getString(KEY_CACHED_WECHAT_ID, "").orEmpty().trim()
+        set(value) = prefs.edit().putString(KEY_CACHED_WECHAT_ID, value.trim()).apply()
+
+    /**
+     * 回传给中控的 service_account_id。
+     * 优先级：微信「我」页微信号 > 设备上配置的别名。
+     */
+    val serviceAccountId: String
+        get() = cachedWechatId.ifBlank { serviceAlias }
+
+    // ------------------------------------------------------------ 采集参数
+
+    /** 最近 N 条可见消息，默认 5。 */
+    var maxMessages: Int
+        get() = prefs.getInt(KEY_MAX_MESSAGES, DEFAULT_MAX_MESSAGES).coerceIn(MIN_MESSAGES, MAX_MESSAGES)
+        set(value) = prefs.edit()
+            .putInt(KEY_MAX_MESSAGES, value.coerceIn(MIN_MESSAGES, MAX_MESSAGES))
+            .apply()
+
+    /** OCR 降级开关：默认关闭。 */
+    var ocrFallbackEnabled: Boolean
+        get() = prefs.getBoolean(KEY_OCR_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_OCR_ENABLED, value).apply()
+
+    /** 本地日志开关。开启后也只记录时间戳/包名/read_status/HTTP 状态码。 */
+    var localLogEnabled: Boolean
+        get() = prefs.getBoolean(KEY_LOCAL_LOG, false)
+        set(value) = prefs.edit().putBoolean(KEY_LOCAL_LOG, value).apply()
+
+    // ------------------------------------------------------------ device_id
+
+    /**
+     * device_id = android_id 的 SHA-256 哈希（不持久化明文 android_id）。
+     */
+    val deviceId: String by lazy { hashAndroidId() }
+
+    private fun hashAndroidId(): String {
+        val raw = try {
+            Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID)
+        } catch (_: Exception) {
+            null
+        } ?: return UNKNOWN_DEVICE_ID
+        return sha256Hex(raw)
+    }
+
+    private fun sha256Hex(input: String): String = try {
+        val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
+        digest.joinToString(separator = "") { b -> "%02x".format(b) }
+    } catch (_: Exception) {
+        UNKNOWN_DEVICE_ID
+    }
+
+    companion object {
+        const val PREFS_NAME = "kf_settings"
+
+        private const val KEY_CENTER_URL = "center_url"
+        private const val KEY_FEEDBACK_URL = "feedback_url"
+        private const val KEY_SERVICE_ALIAS = "service_alias"
+        private const val KEY_CACHED_WECHAT_ID = "cached_wechat_id"
+        private const val KEY_MAX_MESSAGES = "max_messages"
+        private const val KEY_OCR_ENABLED = "ocr_fallback_enabled"
+        private const val KEY_LOCAL_LOG = "local_log_enabled"
+
+        const val DEFAULT_MAX_MESSAGES = 5
+        const val MIN_MESSAGES = 1
+        const val MAX_MESSAGES = 20
+
+        const val UNKNOWN_DEVICE_ID = "unknown_device"
+
+        /**
+         * 由上报地址派生反馈地址：同 scheme+authority，路径替换为 /feedback（或追加）。
+         */
+        fun deriveFeedbackUrl(centerUrl: String): String {
+            val url = centerUrl.trim()
+            if (url.isBlank()) return ""
+            return try {
+                val parsed = java.net.URI(url)
+                val scheme = parsed.scheme ?: return ""
+                val authority = parsed.authority ?: return ""
+                val path = parsed.path.orEmpty()
+                val base = path.substringBeforeLast('/', "")
+                val feedbackPath = if (base.isEmpty() || base == "/") "/feedback" else "$base/feedback"
+                "$scheme://$authority$feedbackPath"
+            } catch (_: Exception) {
+                ""
+            }
+        }
+    }
+}

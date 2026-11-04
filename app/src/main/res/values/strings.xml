@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">客服只读助手</string>
+
+    <!-- 主界面 -->
+    <string name="main_readonly_statement">本应用为微信客服会话只读节点：仅读取当前前台单聊界面的有限信息并回传中控，不写入、不操作微信，发送消息永远由人工完成。</string>
+    <string name="main_btn_accessibility">前往开启无障碍服务</string>
+    <string name="main_btn_overlay">前往开启悬浮窗权限</string>
+    <string name="main_btn_settings">打开设置</string>
+    <string name="state_on">已开启</string>
+    <string name="state_off">未开启</string>
+    <string name="main_status_fmt">无障碍服务：%1$s\n悬浮窗权限：%2$s\n中控地址：%3$s</string>
+
+    <!-- 设置页 -->
+    <string name="settings_title">设置</string>
+    <string name="settings_center_url">中控地址（上报接口，HTTP POST JSON）</string>
+    <string name="settings_center_url_hint">http://10.0.0.5:8080/ingest</string>
+    <string name="settings_service_alias">客服账号别名（微信号读取失败时兜底）</string>
+    <string name="settings_service_alias_hint">例如 kf_001</string>
+    <string name="settings_max_messages">回传消息条数 N（1–20，默认 5）</string>
+    <string name="settings_ocr_switch">OCR 降级读取（默认关闭）</string>
+    <string name="settings_log_switch">本地日志（仅记录时间戳/包名/状态码，不记录聊天文本）</string>
+    <string name="settings_btn_save">保存设置</string>
+    <string name="settings_btn_accessibility">前往系统无障碍设置</string>
+    <string name="settings_btn_overlay">前往悬浮窗权限设置</string>
+    <string name="settings_btn_view_log">查看本地日志</string>
+    <string name="settings_readonly_note">只读声明：本应用不向微信写入任何内容、不注入任何手势或输入事件，不写入微信输入框，不自动发送消息，不读取微信数据库。会话内容仅存在于内存，会话切换即清空。</string>
+
+    <!-- 日志页 -->
+    <string name="log_title">本地日志</string>
+    <string name="log_empty">暂无日志。可在设置页开启日志开关。</string>
+
+    <!-- 无障碍服务（对外标签刻意与"选择朗读"语义一致，服务于只读伪装） -->
+    <string name="accessibility_service_label">选择朗读内容</string>
+    <string name="accessibility_service_summary">朗读所选屏幕内容</string>
+    <string name="accessibility_service_description">读取当前窗口文本以辅助朗读与提示展示。本服务只读取内容，不会代替用户点击、输入或发送任何消息。</string>
+
+    <!-- 悬浮窗 -->
+    <string name="overlay_title_hint">客服提示</string>
+    <string name="overlay_empty_hint">（中控未返回提示内容）</string>
+    <string name="overlay_btn_got_it">知道了</string>
+    <string name="overlay_title_candidates">候选关联</string>
+    <string name="overlay_empty_candidates">（无候选）</string>
+    <string name="overlay_btn_confirm">确认关联</string>
+    <string name="overlay_btn_reject">不是同一人</string>
+    <string name="overlay_btn_close">关闭</string>
+    <string name="overlay_title_no_match">未找到记录</string>
+    <string name="overlay_no_match_body">未找到该顾客的历史记录</string>
+    <string name="overlay_candidate_label_fmt">%1$s</string>
+    <string name="overlay_candidate_meta_fmt">置信度 %1$d%% · %2$s</string>
+</resources>

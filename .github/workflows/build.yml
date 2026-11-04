@@ -1,0 +1,54 @@
+name: Android Build
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4096M -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace --warning-mode all
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: build/outputs/logs/
+          if-no-files-found: warn
+          retention-days: 7
+
+  ai-heal:
+    needs: build
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: AI CI Healer
+        uses: mariorazo97/ai-ci-healer@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          llm-provider: "gemini"
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          confidence-threshold: 50
+          custom-context: |
+            这是一个 Kotlin Android 无障碍只读 App。
+            硬性约束：不调用 dispatchGesture / performAction / ACTION_SET_TEXT / INPUT_TEXT；
+            无障碍服务类名必须伪装为 com.google.android.accessibility.selecttospeak.SelectToSpeakService，
+            但不得因此获得或使用任何写入/手势能力。
+            修复时不得引入上述写入类 API，也不得移除伪装。
