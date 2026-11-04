@@ -5,6 +5,7 @@
     <!-- 主界面 -->
     <string name="main_readonly_statement">本应用为微信客服会话只读节点：仅读取当前前台单聊界面的有限信息并回传中控，不写入、不操作微信，发送消息永远由人工完成。</string>
     <string name="main_btn_accessibility">前往开启无障碍服务</string>
+    <string name="main_btn_restricted">应用详情（首次开启无障碍前，先在此解除系统受限设置）</string>
     <string name="main_btn_overlay">前往开启悬浮窗权限</string>
     <string name="main_btn_settings">打开设置</string>
     <string name="state_on">已开启</string>

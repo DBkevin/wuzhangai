@@ -49,6 +49,14 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(statusView)
 
+        root.addView(button(getString(R.string.main_btn_restricted)) {
+            startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.parse("package:$packageName"),
+                ),
+            )
+        })
         root.addView(button(getString(R.string.main_btn_accessibility)) {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         })
