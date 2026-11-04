@@ -70,7 +70,7 @@ object WechatIdReader {
         return WXID_REGEX.matches(value) || CUSTOM_ID_REGEX.matches(value)
     }
 
-    private inline fun walk(node: AccessibilityNodeInfo, depth: Int, action: (AccessibilityNodeInfo) -> Unit) {
+    private fun walk(node: AccessibilityNodeInfo, depth: Int, action: (AccessibilityNodeInfo) -> Unit) {
         if (depth > MAX_DEPTH) return
         action(node)
         val count = node.childCount

@@ -21,8 +21,7 @@ class LocalLogActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val logger = AssistantApp.global?.logger
-        val lines = logger?.snapshot().orEmpty()
+        val lines = com.tencent.mm.assistant.util.SafeLogger.snapshot()
 
         val text = TextView(this).apply {
             textSize = 12f

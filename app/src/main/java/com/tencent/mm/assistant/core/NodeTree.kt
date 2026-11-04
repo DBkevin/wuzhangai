@@ -82,7 +82,7 @@ class NodeBudget(private var remaining: Int) {
 const val DEFAULT_MAX_DEPTH = 40
 const val DEFAULT_MAX_NODES = 600
 
-private inline fun walk(
+private fun walk(
     node: NodeTree,
     depth: Int,
     maxDepth: Int,

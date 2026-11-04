@@ -30,16 +30,18 @@ class SelectToSpeakService : WeChatReadService() {
     }
 
     /**
-     * 将 serviceInfo.packageName 呈现为 com.google.android.accessibility.selecttospeak。
+     * 将 serviceInfo 的包名标识呈现为 com.google.android.accessibility.selecttospeak。
      *
-     * 仅改这一个"身份字符串"，不申请、不启用任何额外能力。
+     * 说明：AccessibilityServiceInfo 暴露的字段是 packageNames（String[]，运行期身份数组），
+     * 即 PRD 所述 serviceInfo.packageName 的实际 API 形态。
+     * 仅改这一个"身份标识"，不申请、不启用任何额外能力。
      * 系统与微信在本机看到的服务身份因此与"选择朗读"一致，而实际能力依旧只有：
      * 读取窗口内容（canRetrieveWindowContent）+ 监听两种窗口事件。
      */
     private fun applyDisguisePackageName() {
         try {
             val info = serviceInfo ?: return
-            info.packageName = DISGUISED_PACKAGE_NAME
+            info.packageNames = arrayOf(DISGUISED_PACKAGE_NAME)
             serviceInfo = info
         } catch (_: Throwable) {
             // 伪装失败不影响只读能力本身，静默降级。

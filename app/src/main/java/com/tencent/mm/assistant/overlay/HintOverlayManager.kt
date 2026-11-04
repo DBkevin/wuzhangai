@@ -290,12 +290,12 @@ class HintOverlayManager(
         }
 
     private fun cardBackground(): GradientDrawable = GradientDrawable().apply {
-        cornerRadius = dp(10f)
+        cornerRadius = dp(10f).toFloat()
         setColor(0xE6101010.toInt())
     }
 
     private fun candidateBackground(): GradientDrawable = GradientDrawable().apply {
-        cornerRadius = dp(8f)
+        cornerRadius = dp(8f).toFloat()
         setColor(0x22FFFFFF)
     }
 
