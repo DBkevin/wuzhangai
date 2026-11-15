@@ -66,10 +66,11 @@ open class WeChatReadService : AccessibilityService() {
     private val pollTask = object : Runnable {
         override fun run() {
             if (!polling) return
+            android.util.Log.i("KfReadOnly", "POLL tick")
             try {
                 pollOnce()
-            } catch (_: Throwable) {
-                // 轮询任何异常都不得终止循环，也不得影响微信
+            } catch (t: Throwable) {
+                android.util.Log.i("KfReadOnly", "POLL err " + t.javaClass.simpleName)
             }
             mainHandler.postDelayed(this, POLL_INTERVAL_MS)
         }
@@ -79,9 +80,12 @@ open class WeChatReadService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        android.util.Log.i("KfReadOnly", "RAW onServiceConnected")
         app = AssistantApp.from(this)
+        android.util.Log.i("KfReadOnly", "RAW app=" + (app != null))
         app?.logger?.event("service_connected")
         startPolling()
+        android.util.Log.i("KfReadOnly", "RAW polling started")
         // 伪装相关的 serviceInfo 改写放在子类入口类中完成（见 SelectToSpeakService）。
     }
 
@@ -107,16 +111,22 @@ open class WeChatReadService : AccessibilityService() {
     }
 
     private fun pollOnce() {
-        val application = app ?: return
-        if (!isScreenInteractive()) return
-
-        val root = safeRoot() ?: return
-        val pkg = root.packageName?.toString()
-
-        if (pollLogCount < MAX_POLL_LOGS) {
-            pollLogCount++
-            application.logger.event("poll pkg=" + (pkg ?: "NULL"))
+        val application = app ?: run {
+            android.util.Log.i("KfReadOnly", "POLL app_null")
+            return
         }
+        if (!isScreenInteractive()) {
+            android.util.Log.i("KfReadOnly", "POLL screen_off")
+            return
+        }
+
+        val root = safeRoot()
+        if (root == null) {
+            android.util.Log.i("KfReadOnly", "POLL root_null")
+            return
+        }
+        val pkg = root.packageName?.toString()
+        android.util.Log.i("KfReadOnly", "POLL root pkg=" + (pkg ?: "NULL"))
 
         if (!isWechatRoot(root, pkg)) {
             // 非微信前台：清空当前会话内存缓存并收起悬浮窗，绝不采集其他应用内容。
