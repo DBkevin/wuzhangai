@@ -37,6 +37,11 @@
     <string name="accessibility_service_summary">朗读所选屏幕内容</string>
     <string name="accessibility_service_description">读取当前窗口文本以辅助朗读与提示展示。本服务只读取内容，不会代替用户点击、输入或发送任何消息。</string>
 
+    <!-- 保活前台服务通知（内容固定，不含任何聊天信息） -->
+    <string name="keepalive_channel">运行状态</string>
+    <string name="keepalive_title">客服只读助手运行中</string>
+    <string name="keepalive_text">正在监听当前微信单聊界面（只读，不写入、不发送）</string>
+
     <!-- 悬浮窗 -->
     <string name="overlay_title_hint">客服提示</string>
     <string name="overlay_empty_hint">（中控未返回提示内容）</string>

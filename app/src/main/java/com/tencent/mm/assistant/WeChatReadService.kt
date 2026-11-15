@@ -86,6 +86,8 @@ open class WeChatReadService : AccessibilityService() {
         app = AssistantApp.from(this)
         android.util.Log.i("KfReadOnly", "RAW app=" + (app != null))
         app?.logger?.event("service_connected")
+        // 前台服务保活：避免 MIUI/HyperOS 冻结本进程导致轮询停止
+        KeepAliveService.start(this)
         startPolling()
         android.util.Log.i("KfReadOnly", "RAW polling started")
         // 伪装相关的 serviceInfo 改写放在子类入口类中完成（见 SelectToSpeakService）。
@@ -101,6 +103,7 @@ open class WeChatReadService : AccessibilityService() {
         cancelPending()
         gate.reset()
         app?.overlay?.dismiss()
+        KeepAliveService.stop(this)
         super.onDestroy()
     }
 

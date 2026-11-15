@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 保活前台服务：防止 MIUI/HyperOS 冻结持有无障碍绑定的进程 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
       刻意不申请、也不声明以下任何"写入/操作"相关能力：
@@ -44,6 +48,18 @@
             android:exported="false"
             android:label="@string/log_title"
             android:parentActivityName=".settings.SettingsActivity" />
+
+        <!--
+          保活前台服务：仅用于防止系统冻结本进程，不做任何数据采集。
+        -->
+        <service
+            android:name=".KeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keep accessibility-based read-only session monitoring alive on OEM ROMs that freeze background processes" />
+        </service>
 
         <!--
           无障碍服务入口。
