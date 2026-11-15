@@ -67,7 +67,6 @@ object ChatScreenDetector {
 
         val title = findTitleText(root, screen)
         val container = findMessageContainer(root, screen)
-
         if (container == null) {
             // 没有消息列表容器：聊天列表页 / 详情页 / 朋友圈等，一律跳过。
             return ExtractResult.NotSingleChat("no_container")
@@ -107,7 +106,7 @@ object ChatScreenDetector {
             )
         }
 
-        val title = resolvedTitle
+        val chatTitle: String = resolvedTitle
 
         val messages = extractMessages(container, maxMessages)
         val messageNodesPresent = countTextCandidateNodes(container) > 0
@@ -115,15 +114,15 @@ object ChatScreenDetector {
         // 消息节点被混淆：树里有节点但取不到任何文本 -> 只回传标题。
         if (messages.isEmpty() && !messageNodesPresent) {
             return ExtractResult.MessagesObfuscated(
-                title = title,
-                sessionKey = sessionKeyOf(title),
+                title = chatTitle,
+                sessionKey = sessionKeyOf(chatTitle),
             )
         }
 
         return ExtractResult.Success(
-            title = title,
+            title = chatTitle,
             recentMessages = messages,
-            sessionKey = sessionKeyOf(title),
+            sessionKey = sessionKeyOf(chatTitle),
         )
     }
 
