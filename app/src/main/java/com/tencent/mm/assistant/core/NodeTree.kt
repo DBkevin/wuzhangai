@@ -14,6 +14,7 @@ import android.view.accessibility.AccessibilityNodeInfo
  */
 interface NodeTree {
     val text: CharSequence?
+    val contentDescription: CharSequence?
     val viewIdResourceName: String?
     val className: String?
     val bounds: Rect
@@ -31,6 +32,9 @@ class AccessibilityNodeTree(
 
     override val text: CharSequence?
         get() = node.text
+
+    override val contentDescription: CharSequence?
+        get() = node.contentDescription
 
     override val viewIdResourceName: String?
         get() = node.viewIdResourceName

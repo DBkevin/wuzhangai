@@ -59,8 +59,9 @@ Start-Sleep -Seconds 2
 Step "reinstall"
 & $Adb -s $Serial uninstall $pkg | Out-Null
 $installOut = & $Adb -s $Serial install $apk 2>&1
-Write-Host $installOut
-if ($installOut -notmatch 'Success') { throw "install failed: $installOut" }
+$installText = ($installOut | Out-String)
+Write-Host $installText.Trim()
+if ($installText -notmatch 'Success') { throw "install failed: $installText" }
 
 # ---------- 4. 写入配置 ----------
 Step "write prefs"

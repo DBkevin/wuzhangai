@@ -40,6 +40,9 @@ object ChatScreenDetector {
     /** 输入栏判定：中心点位于屏幕该比例以下即视为"底部区域"。 */
     private const val INPUT_BAR_TOP_RATIO = 0.55f
 
+    /** 消息头像 contentDescription 的后缀，形如「张三头像」。 */
+    private const val AVATAR_SUFFIX = "头像"
+
     private val GROUP_TITLE_REGEX = Regex(""".*[\(\[（【]\s*\d+\s*[\)\]）】]\s*$""")
 
     /** 这些文本出现在顶部区域时，说明不是普通单聊界面。 */
@@ -76,8 +79,19 @@ object ChatScreenDetector {
             return ExtractResult.NotSingleChat("no_input_bar")
         }
 
+        // 头像昵称：微信聊天页标题栏文本不在无障碍树里，但每条消息左侧头像的
+        // contentDescription 形如「XXX头像」，可据此还原会话对象。
+        // 左侧出现多个不同昵称 => 群聊，一律跳过。
+        val avatar = readContactNameFromAvatars(root, screen)
+        if (avatar.isGroup) {
+            return ExtractResult.NotSingleChat("group_multi_avatar")
+        }
+
+        // 标题优先级：标题栏文本 > 左侧头像昵称（微信聊天页标题栏文本常不暴露在树里）
+        val resolvedTitle = title ?: avatar.name
+
         // 标题缺失：属"单聊界面成立但读取失败"，按 PRD 要求 title=null + partial。
-        if (title == null) {
+        if (resolvedTitle == null) {
             val messages = extractMessages(container, maxMessages)
             return ExtractResult.TitleUnreadable(
                 recentMessages = messages,
@@ -87,9 +101,13 @@ object ChatScreenDetector {
 
         // 群聊 / 公众号 / 服务号 等一律跳过（判定放在标题拿到之后，避免误伤）。
         // 日志只记分类与长度，不记标题原文（PRD：本地日志不含聊天文本）。
-        isNonSingleChatCategory(title)?.let { category ->
-            return ExtractResult.NotSingleChat("non_single_title:" + category + ":len=" + title.length)
+        isNonSingleChatCategory(resolvedTitle)?.let { category ->
+            return ExtractResult.NotSingleChat(
+                "non_single_title:" + category + ":len=" + resolvedTitle.length,
+            )
         }
+
+        val title = resolvedTitle
 
         val messages = extractMessages(container, maxMessages)
         val messageNodesPresent = countTextCandidateNodes(container) > 0
@@ -111,6 +129,40 @@ object ChatScreenDetector {
 
     fun sessionKeyOf(title: String?): String =
         title?.takeIf { it.isNotBlank() } ?: SESSION_KEY_UNKNOWN
+
+    /** 从头像 contentDescription 还原出的会话对象信息。 */
+    data class AvatarContact(val name: String?, val isGroup: Boolean)
+
+    /**
+     * 从消息头像的 contentDescription 还原会话对象。
+     *
+     * 背景：微信聊天页的标题栏文本不在无障碍树里（实测标题栏只有"聊天信息"按钮），
+     * 但每条消息的头像会带 contentDescription，形如「XXX头像」。
+     * 左侧（屏幕左半）头像属于对方，右侧属于自己。
+     *
+     * 判定：
+     *   * 左侧只有 1 个不同昵称 -> 单聊，取该昵称
+     *   * 左侧出现 >= 2 个不同昵称 -> 群聊
+     *   * 没有左侧头像 -> 无法判断，返回 name=null（后续走 title=null 分支）
+     */
+    fun readContactNameFromAvatars(root: NodeTree, screen: Rect): AvatarContact {
+        val half = screen.left + screen.width() / 2
+        val leftNames = LinkedHashSet<String>()
+        root.forEachNode(maxDepth = DEFAULT_MAX_DEPTH, maxNodes = DEFAULT_MAX_NODES) { node, _ ->
+            val cd = node.contentDescription?.toString()?.trim().orEmpty()
+            if (cd.length <= AVATAR_SUFFIX.length || !cd.endsWith(AVATAR_SUFFIX)) return@forEachNode
+            val b = node.bounds
+            if (b.width() <= 0 || b.height() <= 0) return@forEachNode
+            if (b.centerX() >= half) return@forEachNode
+            val name = cd.removeSuffix(AVATAR_SUFFIX).trim()
+            if (name.isNotEmpty()) leftNames.add(name)
+        }
+        return when {
+            leftNames.size == 1 -> AvatarContact(leftNames.first(), false)
+            leftNames.size > 1 -> AvatarContact(null, true)
+            else -> AvatarContact(null, false)
+        }
+    }
 
     /**
      * 判断页面底部是否存在聊天输入栏。
