@@ -51,6 +51,9 @@ open class WeChatReadService : AccessibilityService() {
     /** 诊断：已输出的事件日志条数（限流，避免刷爆 logcat）。 */
     private var eventLogCount = 0
 
+    /** 诊断：已输出的轮询日志条数（限流）。 */
+    private var pollLogCount = 0
+
     /** 轮询是否已启动。 */
     private var polling = false
 
@@ -109,7 +112,12 @@ open class WeChatReadService : AccessibilityService() {
         val root = safeRoot() ?: return
         val pkg = root.packageName?.toString()
 
-        if (pkg != ChatScreenDetector.WECHAT_PACKAGE) {
+        if (pollLogCount < MAX_POLL_LOGS) {
+            pollLogCount++
+            application.logger.event("poll pkg=" + (pkg ?: "NULL"))
+        }
+
+        if (!isWechatRoot(root, pkg)) {
             // 非微信前台：清空当前会话内存缓存并收起悬浮窗，绝不采集其他应用内容。
             if (gate.activeSessionKey != null) {
                 gate.reset()
@@ -121,6 +129,36 @@ open class WeChatReadService : AccessibilityService() {
 
         lastRoot = root
         extractAndDispatch()
+    }
+
+    /**
+     * 判断当前根节点是否属于微信。
+     *
+     * 为什么不能只看 packageName：
+     *   微信对第三方无障碍服务混淆节点树，rootInActiveWindow.packageName 实测会返回 null，
+     *   直接比较包名会导致永远判定"不是微信"。
+     * 兜底判据：viewIdResourceName 的包前缀（需 FLAG_REPORT_VIEW_IDS，已启用）。
+     * 该字段形如 com.tencent.mm:id/xxxx，混淆节点树时通常仍保留。
+     */
+    private fun isWechatRoot(root: AccessibilityNodeInfo, pkg: String?): Boolean {
+        if (pkg == ChatScreenDetector.WECHAT_PACKAGE) return true
+        if (pkg != null && pkg.isNotEmpty()) {
+            // 明确是别的应用，直接否定，避免误读其他 App 内容。
+            return false
+        }
+        // packageName 为 null（被混淆）：用节点 ID 前缀佐证。
+        var hit = false
+        try {
+            AccessibilityNodeTree(root).forEachNode(maxDepth = VIEW_ID_PROBE_DEPTH, maxNodes = VIEW_ID_PROBE_NODES) { node, _ ->
+                val id = node.viewIdResourceName
+                if (!hit && id != null && id.startsWith(ChatScreenDetector.WECHAT_PACKAGE + ":")) {
+                    hit = true
+                }
+            }
+        } catch (_: Throwable) {
+            return false
+        }
+        return hit
     }
 
     private fun isScreenInteractive(): Boolean = try {
@@ -357,5 +395,12 @@ open class WeChatReadService : AccessibilityService() {
 
         /** 诊断日志上限：只记录前若干条事件，避免刷爆 logcat 与环形缓冲。 */
         private const val MAX_EVENT_LOGS = 40
+
+        /** 轮询诊断日志上限。 */
+        private const val MAX_POLL_LOGS = 30
+
+        /** 用节点 ID 前缀判断归属时的探测范围（浅层即可命中）。 */
+        private const val VIEW_ID_PROBE_DEPTH = 8
+        private const val VIEW_ID_PROBE_NODES = 120
     }
 }
