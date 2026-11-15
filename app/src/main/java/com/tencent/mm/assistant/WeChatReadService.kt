@@ -46,6 +46,9 @@ open class WeChatReadService : AccessibilityService() {
     /** 诊断：已输出的事件日志条数（限流，避免刷爆 logcat）。 */
     private var eventLogCount = 0
 
+    /** 最近一次事件对应的窗口根节点，供 2 秒去抖后的提取复用。 */
+    private var lastEventRoot: AccessibilityNodeInfo? = null
+
     private val screenRect = Rect()
 
     override fun onServiceConnected() {
@@ -82,23 +85,29 @@ open class WeChatReadService : AccessibilityService() {
             return
         }
 
-        // 2) 取微信自己的窗口根节点。
+        // 2) 取当前窗口根节点。
         //
-        // 不用 rootInActiveWindow：MIUI / 部分 ROM 上它会返回常驻悬浮窗、负一屏
-        // （com.miui.personalassistant）或输入法的窗口，导致包名不是微信而被误丢弃。
-        // 改为遍历 windows，挑 packageName == com.tencent.mm 且 isActive 的窗口。
-        val root = wechatRoot()
+        // 关键：不能靠 root.packageName 判断是不是微信。
+        // 微信会混淆第三方无障碍服务拿到的节点树（PRD 1.1 描述的现象），
+        // 实测 rootInActiveWindow / window.root 的 packageName 会变成 null 或非微信值，
+        // 而 event.packageName 始终是正确的 com.tencent.mm。
+        // 因此以「事件包名」为准（上面已校验），根节点只负责提供内容。
+        val root = currentRoot(event)
         if (root == null) {
             if (eventLogCount < MAX_EVENT_LOGS) {
                 eventLogCount++
-                app?.logger?.event("evt_no_wechat_root t=" + eventType)
+                app?.logger?.event("evt_no_root t=" + eventType)
             }
             return
         }
+        lastEventRoot = root
 
         if (eventLogCount < MAX_EVENT_LOGS) {
             eventLogCount++
-            app?.logger?.event("evt t=" + eventType + " pkg=" + eventPackage)
+            app?.logger?.event(
+                "evt t=" + eventType + " pkg=" + eventPackage +
+                    " rootPkg=" + (root.packageName ?: "null"),
+            )
         }
 
         // 3) 顺路尝试补全客服账号标识（微信「我」页的微信号）。
@@ -137,7 +146,8 @@ open class WeChatReadService : AccessibilityService() {
     private fun runExtraction() {
         pendingExtract = null
         val application = app ?: return
-        val root: AccessibilityNodeInfo = wechatRoot() ?: return
+        // 优先复用事件时刻抓到的根节点（那时微信一定在前台），失效则重新获取。
+        val root: AccessibilityNodeInfo = lastEventRoot ?: safeRoot() ?: return
 
         val screen = currentScreenRect()
         val maxMessages = application.settings.maxMessages
@@ -291,41 +301,49 @@ open class WeChatReadService : AccessibilityService() {
 
     // ---------------------------------------------------------------- 工具
 
+    /**
+     * 取当前窗口根节点（多路径兜底）。
+     *
+     * 为什么不用"包名匹配 windows"：
+     *   微信会混淆第三方无障碍服务看到的节点树，window.root.packageName 可能为 null
+     *   或非微信值，按包名筛选会全部落空（实测即为此现象）。
+     * 因此这里只负责"拿到根"，是否属于微信由 event.packageName 判定。
+     */
+    private fun currentRoot(event: AccessibilityEvent): AccessibilityNodeInfo? {
+        // 1) 事件源向上爬到根：最贴近"事件发生在哪个窗口"
+        try {
+            var node = event.source
+            if (node != null) {
+                var parent = node.parent
+                var guard = 0
+                while (parent != null && guard < MAX_PARENT_CLIMB) {
+                    node = parent
+                    parent = parent.parent
+                    guard++
+                }
+                if (node != null) return node
+            }
+        } catch (_: Throwable) {
+            // 忽略，走下一路径
+        }
+
+        // 2) 当前活动窗口的根
+        try {
+            windows?.firstOrNull { it.isActive }?.let { w ->
+                w.root?.let { return it }
+            }
+        } catch (_: Throwable) {
+            // 忽略
+        }
+
+        // 3) 系统当前活动窗口
+        return safeRoot()
+    }
+
     private fun safeRoot(): AccessibilityNodeInfo? = try {
         rootInActiveWindow
     } catch (_: Throwable) {
         null
-    }
-
-    /**
-     * 取"微信自己的"窗口根节点。
-     *
-     * 优先遍历 getWindows()：MIUI 等 ROM 上 rootInActiveWindow 常被负一屏、悬浮窗、
-     * 输入法等窗口顶掉，包名不是微信。这里按 packageName 精确匹配，
-     * 并优先选择 isActive 的窗口（当前真正与用户交互的那个）。
-     */
-    private fun wechatRoot(): AccessibilityNodeInfo? {
-        val candidates = ArrayList<AccessibilityNodeInfo>(4)
-        try {
-            windows?.forEach { w ->
-                val r = try {
-                    w.root
-                } catch (_: Throwable) {
-                    null
-                }
-                if (r != null && r.packageName?.toString() == ChatScreenDetector.WECHAT_PACKAGE) {
-                    candidates.add(r)
-                    if (w.isActive) return r
-                }
-            }
-        } catch (_: Throwable) {
-            // windows 不可用时回退
-        }
-        candidates.firstOrNull()?.let { return it }
-
-        // 回退：rootInActiveWindow 若正好是微信，也可用
-        val fallback = safeRoot()
-        return if (fallback?.packageName?.toString() == ChatScreenDetector.WECHAT_PACKAGE) fallback else null
     }
 
     private fun currentScreenRect(): Rect {
@@ -345,5 +363,8 @@ open class WeChatReadService : AccessibilityService() {
     companion object {
         /** 诊断日志上限：只记录前若干条事件，避免刷爆 logcat 与环形缓冲。 */
         private const val MAX_EVENT_LOGS = 40
+
+        /** 从事件源向上爬树的最大层数（防异常深树导致卡顿）。 */
+        private const val MAX_PARENT_CLIMB = 60
     }
 }
