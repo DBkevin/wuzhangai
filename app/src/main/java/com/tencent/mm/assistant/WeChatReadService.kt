@@ -58,12 +58,6 @@ open class WeChatReadService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
-        // 诊断日志（限流，仅前 40 条）：确认事件是否真的投递到了本服务。
-        if (eventLogCount < MAX_EVENT_LOGS) {
-            eventLogCount++
-            app?.logger?.event("evt t=" + event.eventType + " pkg=" + event.packageName)
-        }
-
         val eventType = event.eventType
         if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
@@ -71,26 +65,36 @@ open class WeChatReadService : AccessibilityService() {
             return
         }
 
-        // 1) 只处理微信前台事件，其余包名直接忽略。
-        val root = safeRoot() ?: run {
-            // 读取不到窗口：可能是其他 App 前台，静默丢弃，绝不做任何补偿性操作。
-            app?.logger?.event("root_null")
-            gate.reset()
-            app?.overlay?.dismiss()
-            return
-        }
-        val rootPackage = root.packageName?.toString()
-        if (rootPackage != ChatScreenDetector.WECHAT_PACKAGE) {
-            // 非微信前台：清空当前会话内存缓存并收起悬浮窗（不采集任何其他应用内容）。
-            gate.reset()
-            lastReportedTitle = null
-            app?.overlay?.dismiss()
+        // 1) 事件包名是主过滤器（配置里只订阅了微信），非微信直接忽略。
+        val eventPackage = event.packageName?.toString()
+        if (eventPackage != ChatScreenDetector.WECHAT_PACKAGE) {
+            // 离开微信：清空当前会话内存缓存并收起悬浮窗（不采集任何其他应用内容）。
+            if (gate.activeSessionKey != null) {
+                gate.reset()
+                lastReportedTitle = null
+                app?.overlay?.dismiss()
+            }
             return
         }
 
-        // 2) 事件包名也必须是微信（双重确认，避免误处理）
-        val eventPackage = event.packageName?.toString()
-        if (eventPackage != null && eventPackage != ChatScreenDetector.WECHAT_PACKAGE) return
+        // 2) 取微信自己的窗口根节点。
+        //
+        // 不用 rootInActiveWindow：MIUI / 部分 ROM 上它会返回常驻悬浮窗、负一屏
+        // （com.miui.personalassistant）或输入法的窗口，导致包名不是微信而被误丢弃。
+        // 改为遍历 windows，挑 packageName == com.tencent.mm 且 isActive 的窗口。
+        val root = wechatRoot()
+        if (root == null) {
+            if (eventLogCount < MAX_EVENT_LOGS) {
+                eventLogCount++
+                app?.logger?.event("evt_no_wechat_root t=" + eventType)
+            }
+            return
+        }
+
+        if (eventLogCount < MAX_EVENT_LOGS) {
+            eventLogCount++
+            app?.logger?.event("evt t=" + eventType + " pkg=" + eventPackage)
+        }
 
         // 3) 顺路尝试补全客服账号标识（微信「我」页的微信号）。
         maybeCaptureWechatId(root)
@@ -128,9 +132,7 @@ open class WeChatReadService : AccessibilityService() {
     private fun runExtraction() {
         pendingExtract = null
         val application = app ?: return
-        val root: AccessibilityNodeInfo = safeRoot() ?: return
-
-        if (root.packageName?.toString() != ChatScreenDetector.WECHAT_PACKAGE) return
+        val root: AccessibilityNodeInfo = wechatRoot() ?: return
 
         val screen = currentScreenRect()
         val maxMessages = application.settings.maxMessages
@@ -288,6 +290,37 @@ open class WeChatReadService : AccessibilityService() {
         rootInActiveWindow
     } catch (_: Throwable) {
         null
+    }
+
+    /**
+     * 取"微信自己的"窗口根节点。
+     *
+     * 优先遍历 getWindows()：MIUI 等 ROM 上 rootInActiveWindow 常被负一屏、悬浮窗、
+     * 输入法等窗口顶掉，包名不是微信。这里按 packageName 精确匹配，
+     * 并优先选择 isActive 的窗口（当前真正与用户交互的那个）。
+     */
+    private fun wechatRoot(): AccessibilityNodeInfo? {
+        val candidates = ArrayList<AccessibilityNodeInfo>(4)
+        try {
+            windows?.forEach { w ->
+                val r = try {
+                    w.root
+                } catch (_: Throwable) {
+                    null
+                }
+                if (r != null && r.packageName?.toString() == ChatScreenDetector.WECHAT_PACKAGE) {
+                    candidates.add(r)
+                    if (w.isActive) return r
+                }
+            }
+        } catch (_: Throwable) {
+            // windows 不可用时回退
+        }
+        candidates.firstOrNull()?.let { return it }
+
+        // 回退：rootInActiveWindow 若正好是微信，也可用
+        val fallback = safeRoot()
+        return if (fallback?.packageName?.toString() == ChatScreenDetector.WECHAT_PACKAGE) fallback else null
     }
 
     private fun currentScreenRect(): Rect {
