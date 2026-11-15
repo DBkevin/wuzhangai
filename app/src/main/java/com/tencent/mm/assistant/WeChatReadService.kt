@@ -56,6 +56,11 @@ open class WeChatReadService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // 无条件原始日志（不受任何开关/判断影响）：用于确认系统是否真的回调本服务。
+        android.util.Log.i(
+            "KfReadOnly",
+            "RAW evt t=" + (event?.eventType ?: -1) + " pkg=" + (event?.packageName ?: "null"),
+        )
         if (event == null) return
 
         val eventType = event.eventType
