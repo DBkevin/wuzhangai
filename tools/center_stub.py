@@ -19,9 +19,17 @@ def decide(payload):
     title = payload.get("title")
     rid = str(uuid.uuid4())
 
-    # 个人资料页：返回识别到的微信号，用于人工确认
+    # 个人资料页：返回识别到的微信号，并提示已与来源会话绑定
     if payload.get("page_type") == "profile":
         wxid = payload.get("contact_wechat_id")
+        linked = payload.get("linked_title")
+        if wxid and linked:
+            return {
+                "action": "show_hint",
+                "hint": "已绑定：" + str(linked) + " = " + str(wxid),
+                "candidates": [],
+                "request_id": rid,
+            }
         if wxid:
             return {
                 "action": "show_hint",

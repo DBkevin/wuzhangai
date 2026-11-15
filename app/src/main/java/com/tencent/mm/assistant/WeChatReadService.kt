@@ -63,6 +63,18 @@ open class WeChatReadService : AccessibilityService() {
     /** 最近一次取到的微信根节点，供去抖后的提取复用。 */
     private var lastRoot: AccessibilityNodeInfo? = null
 
+    /** 最近一次成功识别的单聊会话标题 + 时刻，用于把资料页绑定到来源会话。 */
+    private var lastChatTitle: String? = null
+    private var lastChatAt: Long = 0L
+
+    /**
+     * 会话标题 -> 微信号 的内存映射（不落盘）。
+     *
+     * 人工打开过某人的资料页后，后续该会话的上报就能直接带上微信号，
+     * 中控据此精确取任务。进程结束即丢失，但中控侧会持久化这个绑定。
+     */
+    private val wechatIdByTitle = HashMap<String, String>()
+
     private val screenRect = Rect()
 
     private val pollTask = object : Runnable {
@@ -165,23 +177,41 @@ open class WeChatReadService : AccessibilityService() {
      * 处理个人资料页：只读昵称与微信号，回传中控，由中控决定展示什么提示。
      *
      * 触发方式：**人工**在微信里点头像进入资料页。本服务不点击、不跳转、不返回。
+     *
+     * 身份关联（关键）：
+     *   资料页是从某个单聊点进去的，因此它属于那个会话对象。
+     *   用「最近一次单聊标题 + 时间邻接（PROFILE_LINK_WINDOW_MS 内）」把资料页
+     *   绑定到来源会话，回传 linked_title，中控即可建立「会话标题 → 微信号」映射。
+     *   这样不依赖昵称字符串匹配（备注名与昵称常常不同），也不会张冠李戴。
      */
     private fun handleProfilePage(profile: ProfileInfo) {
         val application = app ?: return
         val wechatId = profile.wechatId
         val nickname = profile.nickname
 
+        // 时间邻接：只有刚从单聊进入资料页时才做绑定，避免隔了很久误绑
+        val linkedTitle = lastChatTitle?.takeIf {
+            it.isNotBlank() && System.currentTimeMillis() - lastChatAt <= PROFILE_LINK_WINDOW_MS
+        }
+
+        // 学到绑定关系，供后续会话上报直接带上微信号
+        if (linkedTitle != null && !wechatId.isNullOrBlank()) {
+            wechatIdByTitle[linkedTitle] = wechatId
+        }
+
         val sessionKey = "profile:" + (wechatId ?: nickname ?: "unknown")
         if (gate.onSessionChanged(sessionKey)) application.overlay.dismiss()
 
-        val titleChanged = lastReportedTitle != nickname || gate.activeSessionKey != sessionKey
+        val titleChanged = lastReportedTitle != linkedTitle || gate.activeSessionKey != sessionKey
         val messages = emptyList<String>()
 
         application.logger.event(
-            "profile id_len=" + (wechatId?.length ?: -1) + " nick_len=" + (nickname?.length ?: -1),
+            "profile id_len=" + (wechatId?.length ?: -1) +
+                " nick_len=" + (nickname?.length ?: -1) +
+                " linked=" + (linkedTitle != null),
         )
 
-        when (gate.shouldSend(sessionKey, nickname, messages, titleChanged)) {
+        when (gate.shouldSend(sessionKey, linkedTitle, messages, titleChanged)) {
             is ReportGate.Decision.SkipUnchanged -> {
                 application.logger.skipped("profile_unchanged")
                 return
@@ -195,19 +225,23 @@ open class WeChatReadService : AccessibilityService() {
             is ReportGate.Decision.Send -> Unit
         }
 
-        gate.markSent(sessionKey, nickname, messages)
-        lastReportedTitle = nickname
+        gate.markSent(sessionKey, linkedTitle, messages)
+        lastReportedTitle = linkedTitle
 
         val report = ReadReport(
             serviceAccountId = application.settings.serviceAccountId,
             deviceId = application.settings.deviceId,
-            title = nickname,
+            // title 用"来源会话标题"，中控据此把微信号挂到该会话上
+            title = linkedTitle ?: nickname,
             recentMessages = messages,
             readStatus = if (wechatId != null) ReadStatus.FULL.wireValue else ReadStatus.PARTIAL.wireValue,
             ts = System.currentTimeMillis(),
             sessionKey = sessionKey,
             pageType = ReadReport.PAGE_PROFILE,
             contactWechatId = wechatId,
+            linkedTitle = linkedTitle,
+            profileNickname = nickname,
+            identityKey = wechatId ?: linkedTitle ?: nickname,
         )
 
         application.logger.readEvent(
@@ -221,7 +255,7 @@ open class WeChatReadService : AccessibilityService() {
                 application.overlay.show(
                     response = response,
                     sessionKey = sessionKey,
-                    title = nickname,
+                    title = linkedTitle ?: nickname,
                 )
             }
         }
@@ -406,10 +440,18 @@ open class WeChatReadService : AccessibilityService() {
         gate.markSent(sessionKey, title, messages)
         lastReportedTitle = title
 
+        // 记录"最近一次单聊"，供资料页做来源绑定
+        if (title != null) {
+            lastChatTitle = title
+            lastChatAt = System.currentTimeMillis()
+        }
+
         application.logger.readEvent(
             packageName = ChatScreenDetector.WECHAT_PACKAGE,
             readStatus = readStatus.wireValue,
         )
+
+        val knownWechatId = title?.let { wechatIdByTitle[it] }
 
         val report = ReadReport(
             serviceAccountId = application.settings.serviceAccountId,
@@ -419,6 +461,9 @@ open class WeChatReadService : AccessibilityService() {
             readStatus = readStatus.wireValue,
             ts = System.currentTimeMillis(),
             sessionKey = sessionKey,
+            pageType = ReadReport.PAGE_CHAT,
+            contactWechatId = knownWechatId,
+            identityKey = knownWechatId ?: title,
         )
 
         application.centerClient.report(report) { response ->
@@ -498,5 +543,12 @@ open class WeChatReadService : AccessibilityService() {
         /** 用节点 ID 前缀判断归属时的探测范围（浅层即可命中）。 */
         private const val VIEW_ID_PROBE_DEPTH = 8
         private const val VIEW_ID_PROBE_NODES = 120
+
+        /**
+         * 资料页与会话的绑定时间窗：只有在这个时间窗内从单聊进入资料页，才认为
+         * 该资料页属于那个会话。5 分钟足够覆盖"点开看一眼再回来"的操作习惯，
+         * 又能避免隔了很久之后误绑到别的会话。
+         */
+        private const val PROFILE_LINK_WINDOW_MS = 5 * 60 * 1000L
     }
 }

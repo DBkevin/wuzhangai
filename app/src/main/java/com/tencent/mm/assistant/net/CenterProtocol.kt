@@ -20,6 +20,21 @@ data class ReadReport(
     val pageType: String = PAGE_CHAT,
     /** 资料页上展示的微信号（仅 pageType=profile 时非空）。 */
     val contactWechatId: String? = null,
+    /**
+     * 资料页的"来源会话标题"。
+     *
+     * 关键字段：资料页是从某个单聊点进去的，因此该资料页属于那个会话对象。
+     * 有了它，中控就能把「会话标题 → 微信号」绑定起来，
+     * 后续同一会话的上报即可用微信号精确取任务，不再依赖昵称字符串匹配。
+     */
+    val linkedTitle: String? = null,
+    /** 资料页顶部昵称（可能与会话标题不同：标题常是备注名）。 */
+    val profileNickname: String? = null,
+    /**
+     * 统一身份键：有微信号时用微信号，否则退回会话标题。
+     * 中控可用它作为"这个人"的唯一键，跨客服、跨会话匹配。
+     */
+    val identityKey: String? = null,
 ) {
     fun toJson(): String {
         val root = JSONObject()
@@ -33,6 +48,9 @@ data class ReadReport(
         root.put("ts", ts)
         root.put("page_type", pageType)
         root.put("contact_wechat_id", contactWechatId ?: JSONObject.NULL)
+        root.put("linked_title", linkedTitle ?: JSONObject.NULL)
+        root.put("profile_nickname", profileNickname ?: JSONObject.NULL)
+        root.put("identity_key", identityKey ?: JSONObject.NULL)
         return root.toString()
     }
 
