@@ -57,14 +57,14 @@ object ChatScreenDetector {
         screen: Rect,
         maxMessages: Int,
     ): ExtractResult {
-        if (screen.width() <= 0 || screen.height() <= 0) return ExtractResult.NotSingleChat
+        if (screen.width() <= 0 || screen.height() <= 0) return ExtractResult.NotSingleChat("bad_screen")
 
         val title = findTitleText(root, screen)
         val container = findMessageContainer(root, screen)
 
         if (container == null) {
             // 没有消息列表容器：聊天列表页 / 详情页 / 朋友圈等，一律跳过。
-            return ExtractResult.NotSingleChat
+            return ExtractResult.NotSingleChat("no_container")
         }
 
         // 标题缺失：属"单聊界面成立但读取失败"，按 PRD 要求 title=null + partial。
@@ -77,7 +77,10 @@ object ChatScreenDetector {
         }
 
         // 群聊 / 公众号 / 服务号 等一律跳过（判定放在标题拿到之后，避免误伤）。
-        if (isNonSingleChatTitle(title)) return ExtractResult.NotSingleChat
+        // 日志只记分类与长度，不记标题原文（PRD：本地日志不含聊天文本）。
+        isNonSingleChatCategory(title)?.let { category ->
+            return ExtractResult.NotSingleChat("non_single_title:" + category + ":len=" + title.length)
+        }
 
         val messages = extractMessages(container, maxMessages)
         val messageNodesPresent = countTextCandidateNodes(container) > 0
@@ -144,15 +147,21 @@ object ChatScreenDetector {
         return candidates.first()
     }
 
-    fun isNonSingleChatTitle(title: String): Boolean {
+    fun isNonSingleChatTitle(title: String): Boolean = isNonSingleChatCategory(title) != null
+
+    /**
+     * 返回"为什么不是单聊"的分类码（用于诊断日志），单聊返回 null。
+     * 分类码不含标题原文，符合"本地日志不记录聊天文本"。
+     */
+    fun isNonSingleChatCategory(title: String): String? {
         val t = title.trim()
-        if (t.isEmpty()) return true
-        if (NON_SINGLE_CHAT_TITLE_EXACTS.contains(t)) return true
-        if (GROUP_TITLE_REGEX.matches(t)) return true
-        if (NON_SINGLE_CHAT_TITLE_SUFFIXES.any { t.endsWith(it) }) return true
+        if (t.isEmpty()) return "empty"
+        if (NON_SINGLE_CHAT_TITLE_EXACTS.contains(t)) return "reserved"
+        if (GROUP_TITLE_REGEX.matches(t)) return "group_count"
+        if (NON_SINGLE_CHAT_TITLE_SUFFIXES.any { t.endsWith(it) }) return "official_suffix"
         // "(12)" 这类纯人数括注
-        if (Regex("""^[\(\[（【]\s*\d+\s*[\)\]）】]$""").matches(t)) return true
-        return false
+        if (Regex("""^[\(\[（【]\s*\d+\s*[\)\]）】]$""").matches(t)) return "count_only"
+        return null
     }
 
     // ---------------------------------------------------------------- 消息容器

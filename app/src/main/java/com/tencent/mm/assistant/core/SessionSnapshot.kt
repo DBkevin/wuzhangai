@@ -41,8 +41,11 @@ enum class ReadStatus(val wireValue: String) {
  */
 sealed interface ExtractResult {
 
-    /** 当前窗口不是单聊界面（群聊 / 公众号 / 服务号 / 朋友圈 / 聊天列表等），直接跳过。 */
-    data object NotSingleChat : ExtractResult
+    /**
+     * 当前窗口不是单聊界面（群聊 / 公众号 / 服务号 / 朋友圈 / 聊天列表等），直接跳过。
+     * [reason] 仅用于本地诊断日志，不参与任何回传。
+     */
+    data class NotSingleChat(val reason: String) : ExtractResult
 
     /** 是单聊界面，但标题节点缺失或为空 -> title=null, read_status=partial。 */
     data class TitleUnreadable(

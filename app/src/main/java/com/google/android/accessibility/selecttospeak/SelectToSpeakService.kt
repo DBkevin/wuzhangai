@@ -32,16 +32,22 @@ class SelectToSpeakService : WeChatReadService() {
     /**
      * 将 serviceInfo 的包名标识呈现为 com.google.android.accessibility.selecttospeak。
      *
-     * 说明：AccessibilityServiceInfo 暴露的字段是 packageNames（String[]，运行期身份数组），
-     * 即 PRD 所述 serviceInfo.packageName 的实际 API 形态。
-     * 仅改这一个"身份标识"，不申请、不启用任何额外能力。
-     * 系统与微信在本机看到的服务身份因此与"选择朗读"一致，而实际能力依旧只有：
-     * 读取窗口内容（canRetrieveWindowContent）+ 监听两种窗口事件。
+     * 关键说明（踩坑记录）：
+     *   AccessibilityServiceInfo.packageNames 有两个语义叠在一起 —— 它既是"服务身份标识"，
+     *   也是系统投递事件的"包名过滤器"。若只填伪装包名，微信（com.tencent.mm）的事件会被
+     *   系统全部过滤掉，服务收不到任何回调（表现为：服务已绑定、但永远不读取、无浮窗）。
+     *
+     *   因此这里同时保留两个条目：
+     *     [0] com.google.android.accessibility.selecttospeak  —— 伪装身份（PRD 1.1 要求）
+     *     [1] com.tencent.mm                                  —— 事件来源，必须保留才能只读微信
+     *
+     *   这不扩大任何能力：仍然只有 canRetrieveWindowContent + 两种窗口事件，
+     *   依旧没有任何写入/手势能力。
      */
     private fun applyDisguisePackageName() {
         try {
             val info = serviceInfo ?: return
-            info.packageNames = arrayOf(DISGUISED_PACKAGE_NAME)
+            info.packageNames = arrayOf(DISGUISED_PACKAGE_NAME, WECHAT_PACKAGE)
             serviceInfo = info
         } catch (_: Throwable) {
             // 伪装失败不影响只读能力本身，静默降级。
@@ -60,5 +66,8 @@ class SelectToSpeakService : WeChatReadService() {
     companion object {
         /** 伪装包名（PRD 硬性要求，不得修改、不得移除）。 */
         const val DISGUISED_PACKAGE_NAME = "com.google.android.accessibility.selecttospeak"
+
+        /** 事件来源包名：必须留在 packageNames 里，否则收不到微信事件。 */
+        const val WECHAT_PACKAGE = "com.tencent.mm"
     }
 }

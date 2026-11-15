@@ -43,6 +43,9 @@ open class WeChatReadService : AccessibilityService() {
     /** 上一次成功读取到的微信号，避免重复扫描「我」页。 */
     private var wechatIdScanDone = false
 
+    /** 诊断：已输出的事件日志条数（限流，避免刷爆 logcat）。 */
+    private var eventLogCount = 0
+
     private val screenRect = Rect()
 
     override fun onServiceConnected() {
@@ -55,6 +58,12 @@ open class WeChatReadService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
+        // 诊断日志（限流，仅前 40 条）：确认事件是否真的投递到了本服务。
+        if (eventLogCount < MAX_EVENT_LOGS) {
+            eventLogCount++
+            app?.logger?.event("evt t=" + event.eventType + " pkg=" + event.packageName)
+        }
+
         val eventType = event.eventType
         if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
@@ -65,6 +74,7 @@ open class WeChatReadService : AccessibilityService() {
         // 1) 只处理微信前台事件，其余包名直接忽略。
         val root = safeRoot() ?: run {
             // 读取不到窗口：可能是其他 App 前台，静默丢弃，绝不做任何补偿性操作。
+            app?.logger?.event("root_null")
             gate.reset()
             app?.overlay?.dismiss()
             return
@@ -133,10 +143,21 @@ open class WeChatReadService : AccessibilityService() {
             return
         }
 
+        // 诊断：只记录结果分类与长度，不记录任何聊天文本。
+        application.logger.event(
+            "detect " + when (result) {
+                is ExtractResult.NotSingleChat -> "skip:" + result.reason
+                is ExtractResult.TitleUnreadable -> "title_null msgs=" + result.recentMessages.size
+                is ExtractResult.MessagesObfuscated -> "obfuscated title_len=" + result.title.length
+                is ExtractResult.Success ->
+                    "ok title_len=" + result.title.length + " msgs=" + result.recentMessages.size
+            },
+        )
+
         when (result) {
             is ExtractResult.NotSingleChat -> {
                 // 群聊 / 公众号 / 服务号 / 朋友圈 / 聊天列表：不上报，并清空该会话缓存。
-                application.logger.skipped("not_single_chat")
+                application.logger.skipped("not_single_chat:" + result.reason)
                 if (gate.activeSessionKey != null) {
                     gate.reset()
                     lastReportedTitle = null
@@ -281,5 +302,10 @@ open class WeChatReadService : AccessibilityService() {
             screenRect.set(0, 0, 1080, 1920)
             screenRect
         }
+    }
+
+    companion object {
+        /** 诊断日志上限：只记录前若干条事件，避免刷爆 logcat 与环形缓冲。 */
+        private const val MAX_EVENT_LOGS = 40
     }
 }
