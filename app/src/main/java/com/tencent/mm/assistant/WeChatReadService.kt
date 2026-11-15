@@ -12,6 +12,7 @@ import com.tencent.mm.assistant.core.ChatScreenDetector
 import com.tencent.mm.assistant.core.ExtractResult
 import com.tencent.mm.assistant.core.ReadStatus
 import com.tencent.mm.assistant.core.ReportGate
+import com.tencent.mm.assistant.core.forEachNode
 import com.tencent.mm.assistant.net.ReadReport
 
 /**
