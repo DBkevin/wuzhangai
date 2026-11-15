@@ -1,10 +1,18 @@
 import argparse
 import json
+import sys
 import threading
 import uuid
 from collections import deque
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# Windows 控制台默认 GBK，打印中文/表情会抛 UnicodeEncodeError 并中断响应。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 
 def decide(payload):
@@ -49,6 +57,10 @@ class Store:
         self.lock = threading.Lock()
         self.events = deque(maxlen=100)
         self.feedback = deque(maxlen=100)
+
+    def snapshot(self):
+        with self.lock:
+            return {"events": list(self.events), "feedback": list(self.feedback)}
 
     def add_report(self, payload, resp):
         with self.lock:
