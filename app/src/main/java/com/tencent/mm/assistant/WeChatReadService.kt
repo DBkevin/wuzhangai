@@ -11,6 +11,7 @@ import com.tencent.mm.assistant.core.AccessibilityNodeTree
 import com.tencent.mm.assistant.core.ChatScreenDetector
 import com.tencent.mm.assistant.core.ExtractResult
 import com.tencent.mm.assistant.core.ProfileInfo
+import com.tencent.mm.assistant.core.ProfileLinker
 import com.tencent.mm.assistant.core.ProfilePageReader
 import com.tencent.mm.assistant.core.ReadStatus
 import com.tencent.mm.assistant.core.ReportGate
@@ -64,8 +65,7 @@ open class WeChatReadService : AccessibilityService() {
     private var lastRoot: AccessibilityNodeInfo? = null
 
     /** 最近一次成功识别的单聊会话标题 + 时刻，用于把资料页绑定到来源会话。 */
-    private var lastChatTitle: String? = null
-    private var lastChatAt: Long = 0L
+    private val profileLinker = ProfileLinker()
 
     /**
      * 会话标题 -> 微信号 的内存映射（不落盘）。
@@ -180,7 +180,7 @@ open class WeChatReadService : AccessibilityService() {
      *
      * 身份关联（关键）：
      *   资料页是从某个单聊点进去的，因此它属于那个会话对象。
-     *   用「最近一次单聊标题 + 时间邻接（PROFILE_LINK_WINDOW_MS 内）」把资料页
+     *   用「最近一次单聊标题 + 时间邻接（ProfileLinker.DEFAULT_WINDOW_MS 内）」把资料页
      *   绑定到来源会话，回传 linked_title，中控即可建立「会话标题 → 微信号」映射。
      *   这样不依赖昵称字符串匹配（备注名与昵称常常不同），也不会张冠李戴。
      */
@@ -190,9 +190,7 @@ open class WeChatReadService : AccessibilityService() {
         val nickname = profile.nickname
 
         // 时间邻接：只有刚从单聊进入资料页时才做绑定，避免隔了很久误绑
-        val linkedTitle = lastChatTitle?.takeIf {
-            it.isNotBlank() && System.currentTimeMillis() - lastChatAt <= PROFILE_LINK_WINDOW_MS
-        }
+        val linkedTitle = profileLinker.sourceTitleFor(System.currentTimeMillis())
 
         // 学到绑定关系，供后续会话上报直接带上微信号
         if (linkedTitle != null && !wechatId.isNullOrBlank()) {
@@ -442,8 +440,7 @@ open class WeChatReadService : AccessibilityService() {
 
         // 记录"最近一次单聊"，供资料页做来源绑定
         if (title != null) {
-            lastChatTitle = title
-            lastChatAt = System.currentTimeMillis()
+            profileLinker.onChatSeen(title, System.currentTimeMillis())
         }
 
         application.logger.readEvent(
@@ -544,11 +541,6 @@ open class WeChatReadService : AccessibilityService() {
         private const val VIEW_ID_PROBE_DEPTH = 8
         private const val VIEW_ID_PROBE_NODES = 120
 
-        /**
-         * 资料页与会话的绑定时间窗：只有在这个时间窗内从单聊进入资料页，才认为
-         * 该资料页属于那个会话。5 分钟足够覆盖"点开看一眼再回来"的操作习惯，
-         * 又能避免隔了很久之后误绑到别的会话。
-         */
-        private const val PROFILE_LINK_WINDOW_MS = 5 * 60 * 1000L
+
     }
 }

@@ -86,6 +86,8 @@ Write-Host "prefs written"
 # ---------- 5. 授权 + 重启无障碍 ----------
 Step "grant + rebind accessibility"
 & $Adb -s $Serial shell appops set $pkg SYSTEM_ALERT_WINDOW allow | Out-Null
+# 通知权限：前台服务常驻通知必须可见，否则 MIUI 仍会冻结进程（cgroup.freeze=1）
+& $Adb -s $Serial shell pm grant $pkg android.permission.POST_NOTIFICATIONS 2>$null | Out-Null
 & $Adb -s $Serial shell am force-stop $pkg | Out-Null
 & $Adb -s $Serial shell settings put secure accessibility_enabled 0 | Out-Null
 & $Adb -s $Serial shell settings put secure enabled_accessibility_services '""' | Out-Null
