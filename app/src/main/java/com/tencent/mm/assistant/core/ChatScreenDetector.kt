@@ -22,9 +22,9 @@ object ChatScreenDetector {
 
     const val WECHAT_PACKAGE = "com.tencent.mm"
 
-    /** 标题候选所在的顶部区域占比。 */
-    private const val TITLE_REGION_TOP_RATIO = 0.06f
-    private const val TITLE_REGION_BOTTOM_RATIO = 0.30f
+    /** 标题候选所在的顶部区域占比（微信聊天标题紧贴状态栏下方，实测约在 3%~12%）。 */
+    private const val TITLE_REGION_TOP_RATIO = 0.02f
+    private const val TITLE_REGION_BOTTOM_RATIO = 0.22f
 
     /** 标题候选的水平中心允许范围（微信标题是居中的）。 */
     private const val TITLE_CENTER_MIN_RATIO = 0.25f
@@ -178,8 +178,12 @@ object ChatScreenDetector {
             if (!candidates.contains(raw)) candidates.add(raw)
         }
 
-        if (candidates.size != 1) return null
-        return candidates.first()
+        if (candidates.isEmpty()) return null
+        if (candidates.size == 1) return candidates.first()
+
+        // 多个候选时，剔除明显不是人名的（保留词/群人数括注），只剩一个才采信。
+        val filtered = candidates.filter { isNonSingleChatCategory(it) == null }
+        return if (filtered.size == 1) filtered.first() else null
     }
 
     fun isNonSingleChatTitle(title: String): Boolean = isNonSingleChatCategory(title) != null
