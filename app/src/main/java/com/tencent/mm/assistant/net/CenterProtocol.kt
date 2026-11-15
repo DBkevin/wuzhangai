@@ -13,6 +13,13 @@ data class ReadReport(
     val ts: Long,
     /** 会话去重键，仅用于本地状态机，不参与序列化。 */
     val sessionKey: String = "",
+    /**
+     * 页面类型：chat = 单聊页；profile = 个人资料页。
+     * 资料页仅在**人工**打开时读取，用于识别对方微信号。
+     */
+    val pageType: String = PAGE_CHAT,
+    /** 资料页上展示的微信号（仅 pageType=profile 时非空）。 */
+    val contactWechatId: String? = null,
 ) {
     fun toJson(): String {
         val root = JSONObject()
@@ -24,7 +31,14 @@ data class ReadReport(
         root.put("recent_messages", arr)
         root.put("read_status", readStatus)
         root.put("ts", ts)
+        root.put("page_type", pageType)
+        root.put("contact_wechat_id", contactWechatId ?: JSONObject.NULL)
         return root.toString()
+    }
+
+    companion object {
+        const val PAGE_CHAT = "chat"
+        const val PAGE_PROFILE = "profile"
     }
 }
 

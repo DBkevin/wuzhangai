@@ -10,6 +10,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.tencent.mm.assistant.core.AccessibilityNodeTree
 import com.tencent.mm.assistant.core.ChatScreenDetector
 import com.tencent.mm.assistant.core.ExtractResult
+import com.tencent.mm.assistant.core.ProfileInfo
+import com.tencent.mm.assistant.core.ProfilePageReader
 import com.tencent.mm.assistant.core.ReadStatus
 import com.tencent.mm.assistant.core.ReportGate
 import com.tencent.mm.assistant.core.forEachNode
@@ -139,7 +141,87 @@ open class WeChatReadService : AccessibilityService() {
         }
 
         lastRoot = root
+
+        // 资料页优先：人工点头像进入资料页时，读微信号并上报（不点击、不跳转）。
+        if (application.settings.profileReadEnabled) {
+            val profile = try {
+                ProfilePageReader.find(AccessibilityNodeTree(root))
+            } catch (_: Throwable) {
+                null
+            }
+            if (profile != null) {
+                handleProfilePage(profile)
+                return
+            }
+        }
+
         extractAndDispatch()
+    }
+
+    /**
+     * 处理个人资料页：只读昵称与微信号，回传中控，由中控决定展示什么提示。
+     *
+     * 触发方式：**人工**在微信里点头像进入资料页。本服务不点击、不跳转、不返回。
+     */
+    private fun handleProfilePage(profile: ProfileInfo) {
+        val application = app ?: return
+        val wechatId = profile.wechatId
+        val nickname = profile.nickname
+
+        val sessionKey = "profile:" + (wechatId ?: nickname ?: "unknown")
+        if (gate.onSessionChanged(sessionKey)) application.overlay.dismiss()
+
+        val titleChanged = lastReportedTitle != nickname || gate.activeSessionKey != sessionKey
+        val messages = emptyList<String>()
+
+        application.logger.event(
+            "profile id_len=" + (wechatId?.length ?: -1) + " nick_len=" + (nickname?.length ?: -1),
+        )
+
+        when (gate.shouldSend(sessionKey, nickname, messages, titleChanged)) {
+            is ReportGate.Decision.SkipUnchanged -> {
+                application.logger.skipped("profile_unchanged")
+                return
+            }
+
+            is ReportGate.Decision.SkipThrottled -> {
+                application.logger.skipped("profile_throttled")
+                return
+            }
+
+            is ReportGate.Decision.Send -> Unit
+        }
+
+        gate.markSent(sessionKey, nickname, messages)
+        lastReportedTitle = nickname
+
+        val report = ReadReport(
+            serviceAccountId = application.settings.serviceAccountId,
+            deviceId = application.settings.deviceId,
+            title = nickname,
+            recentMessages = messages,
+            readStatus = if (wechatId != null) ReadStatus.FULL.wireValue else ReadStatus.PARTIAL.wireValue,
+            ts = System.currentTimeMillis(),
+            sessionKey = sessionKey,
+            pageType = ReadReport.PAGE_PROFILE,
+            contactWechatId = wechatId,
+        )
+
+        application.logger.readEvent(
+            packageName = ChatScreenDetector.WECHAT_PACKAGE,
+            readStatus = report.readStatus,
+        )
+
+        application.centerClient.report(report) { response ->
+            mainHandler.post {
+                if (response == null) return@post
+                application.overlay.show(
+                    response = response,
+                    sessionKey = sessionKey,
+                    title = nickname,
+                )
+            }
+        }
     }
 
     /**

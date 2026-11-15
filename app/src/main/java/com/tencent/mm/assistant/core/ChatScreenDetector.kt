@@ -37,6 +37,9 @@ object ChatScreenDetector {
     private const val MESSAGE_CONTAINER_MIN_HEIGHT_RATIO = 0.35f
     private const val MESSAGE_CONTAINER_MIN_CHILDREN = 2
 
+    /** 输入栏判定：中心点位于屏幕该比例以下即视为"底部区域"。 */
+    private const val INPUT_BAR_TOP_RATIO = 0.55f
+
     private val GROUP_TITLE_REGEX = Regex(""".*[\(\[（【]\s*\d+\s*[\)\]）】]\s*$""")
 
     /** 这些文本出现在顶部区域时，说明不是普通单聊界面。 */
@@ -65,6 +68,12 @@ object ChatScreenDetector {
         if (container == null) {
             // 没有消息列表容器：聊天列表页 / 详情页 / 朋友圈等，一律跳过。
             return ExtractResult.NotSingleChat("no_container")
+        }
+
+        // 必须有"底部输入栏"，否则多半是会话列表页（它同样有 RecyclerView 占满屏幕）。
+        // 这是区分「单聊页」与「会话列表页」最可靠的结构特征。
+        if (!hasInputBar(root, screen)) {
+            return ExtractResult.NotSingleChat("no_input_bar")
         }
 
         // 标题缺失：属"单聊界面成立但读取失败"，按 PRD 要求 title=null + partial。
@@ -102,6 +111,32 @@ object ChatScreenDetector {
 
     fun sessionKeyOf(title: String?): String =
         title?.takeIf { it.isNotBlank() } ?: SESSION_KEY_UNKNOWN
+
+    /**
+     * 判断页面底部是否存在聊天输入栏。
+     *
+     * 微信单聊页底部必有输入区：一个 EditText，或语音模式的「按住 说话」。
+     * 会话列表页没有这个结构，因此这条判据能把"列表页"从"单聊页"里剔除。
+     * 阈值取 0.55：键盘弹起时输入栏会整体上移，留足余量。
+     */
+    fun hasInputBar(root: NodeTree, screen: Rect): Boolean {
+        val bottomStart = screen.top + (screen.height() * INPUT_BAR_TOP_RATIO).toInt()
+        var hit = false
+        root.forEachNode(maxDepth = DEFAULT_MAX_DEPTH, maxNodes = DEFAULT_MAX_NODES) { node, _ ->
+            if (hit) return@forEachNode
+            val b = node.bounds
+            if (b.height() <= 0) return@forEachNode
+            if (b.centerY() < bottomStart) return@forEachNode
+            val cls = node.className.orEmpty()
+            val t = node.text?.toString()?.trim().orEmpty()
+            if (cls.contains("EditText")) {
+                hit = true
+            } else if (t == "按住 说话" || t == "按住说话") {
+                hit = true
+            }
+        }
+        return hit
+    }
 
     const val SESSION_KEY_UNKNOWN = "__unknown_title__"
 

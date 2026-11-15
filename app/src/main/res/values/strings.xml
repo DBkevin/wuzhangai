@@ -21,6 +21,7 @@
     <string name="settings_max_messages">回传消息条数 N（1–20，默认 5）</string>
     <string name="settings_ocr_switch">OCR 降级读取（默认关闭）</string>
     <string name="settings_log_switch">本地日志（仅记录时间戳/包名/状态码，不记录聊天文本）</string>
+    <string name="settings_profile_switch">读取个人资料页微信号（人工打开资料页时识别，用于跨客服同一人匹配）</string>
     <string name="settings_btn_save">保存设置</string>
     <string name="settings_btn_accessibility">前往系统无障碍设置</string>
     <string name="settings_btn_overlay">前往悬浮窗权限设置</string>

@@ -32,6 +32,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var nInput: EditText
     private lateinit var ocrSwitch: Switch
     private lateinit var logSwitch: Switch
+    private lateinit var profileSwitch: Switch
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -78,6 +79,12 @@ class SettingsActivity : AppCompatActivity() {
         }
         root.addView(logSwitch)
 
+        profileSwitch = Switch(this).apply {
+            text = getString(R.string.settings_profile_switch)
+            isChecked = settings.profileReadEnabled
+        }
+        root.addView(profileSwitch)
+
         root.addView(button(getString(R.string.settings_btn_save)) {
             persistInputs()
             finish()
@@ -113,6 +120,7 @@ class SettingsActivity : AppCompatActivity() {
         settings.maxMessages = nInput.text.toString().toIntOrNull() ?: SettingsStore.DEFAULT_MAX_MESSAGES
         settings.ocrFallbackEnabled = ocrSwitch.isChecked
         settings.localLogEnabled = logSwitch.isChecked
+        settings.profileReadEnabled = profileSwitch.isChecked
     }
 
     private fun label(text: String): TextView =

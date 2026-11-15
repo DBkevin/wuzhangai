@@ -10,6 +10,24 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 def decide(payload):
     title = payload.get("title")
     rid = str(uuid.uuid4())
+
+    # 个人资料页：返回识别到的微信号，用于人工确认
+    if payload.get("page_type") == "profile":
+        wxid = payload.get("contact_wechat_id")
+        if wxid:
+            return {
+                "action": "show_hint",
+                "hint": "PROFILE-ID " + str(wxid),
+                "candidates": [],
+                "request_id": rid,
+            }
+        return {
+            "action": "show_hint",
+            "hint": "PROFILE-NO-ID (对方未公开微信号或读取失败)",
+            "candidates": [],
+            "request_id": rid,
+        }
+
     if not title:
         return {"action": "no_match", "hint": "", "candidates": [], "request_id": rid}
     if "A" in title:

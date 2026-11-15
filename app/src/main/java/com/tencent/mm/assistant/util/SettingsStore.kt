@@ -81,6 +81,17 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean(KEY_LOCAL_LOG, false)
         set(value) = prefs.edit().putBoolean(KEY_LOCAL_LOG, value).apply()
 
+    /**
+     * 个人资料页微信号读取开关（默认开启）。
+     *
+     * 说明：这是对原始"只回传四类字段"边界的一次**显式扩展**，
+     * 仅在人工打开某个人的资料页时读取其微信号，用于中控做跨客服同一人匹配。
+     * 关闭后完全不读取资料页。
+     */
+    var profileReadEnabled: Boolean
+        get() = prefs.getBoolean(KEY_PROFILE_READ, true)
+        set(value) = prefs.edit().putBoolean(KEY_PROFILE_READ, value).apply()
+
     // ------------------------------------------------------------ device_id
 
     /**
@@ -114,6 +125,7 @@ class SettingsStore(context: Context) {
         private const val KEY_MAX_MESSAGES = "max_messages"
         private const val KEY_OCR_ENABLED = "ocr_fallback_enabled"
         private const val KEY_LOCAL_LOG = "local_log_enabled"
+        private const val KEY_PROFILE_READ = "profile_read_enabled"
 
         const val DEFAULT_MAX_MESSAGES = 5
         const val MIN_MESSAGES = 1
