@@ -43,6 +43,17 @@ object ChatScreenDetector {
     /** 消息头像 contentDescription 的后缀，形如「张三头像」。 */
     private const val AVATAR_SUFFIX = "头像"
 
+    /** 微信聊天输入栏的 contentDescription 标记（实测值，前缀匹配）。 */
+    private val INPUT_BAR_MARKERS = listOf(
+        "切换到按住说话",
+        "切换到键盘",
+        "切换到语音输入",
+        "更多功能按钮",
+        "表情",
+        "听写",
+        "按住说话",
+    )
+
     private val GROUP_TITLE_REGEX = Regex(""".*[\(\[（【]\s*\d+\s*[\)\]）】]\s*$""")
 
     /** 这些文本出现在顶部区域时，说明不是普通单聊界面。 */
@@ -166,8 +177,10 @@ object ChatScreenDetector {
     /**
      * 判断页面底部是否存在聊天输入栏。
      *
-     * 微信单聊页底部必有输入区：一个 EditText，或语音模式的「按住 说话」。
-     * 会话列表页没有这个结构，因此这条判据能把"列表页"从"单聊页"里剔除。
+     * 微信输入栏不是 EditText（实测是自定义控件），底部区域实际暴露的是这些标记：
+     *   content-desc = "切换到按住说话" / "切换到键盘" / "表情" / "更多功能按钮，已折叠" / "听写"
+     *   或文本 = "按住 说话"
+     * 会话列表页没有这些标记，因此这条判据能把"列表页"从"单聊页"里剔除。
      * 阈值取 0.55：键盘弹起时输入栏会整体上移，留足余量。
      */
     fun hasInputBar(root: NodeTree, screen: Rect): Boolean {
@@ -179,10 +192,17 @@ object ChatScreenDetector {
             if (b.height() <= 0) return@forEachNode
             if (b.centerY() < bottomStart) return@forEachNode
             val cls = node.className.orEmpty()
-            val t = node.text?.toString()?.trim().orEmpty()
             if (cls.contains("EditText")) {
                 hit = true
-            } else if (t == "按住 说话" || t == "按住说话") {
+                return@forEachNode
+            }
+            val text = node.text?.toString()?.trim().orEmpty()
+            if (text == "按住 说话" || text == "按住说话" || text == "发送") {
+                hit = true
+                return@forEachNode
+            }
+            val cd = node.contentDescription?.toString()?.trim().orEmpty()
+            if (cd.isNotEmpty() && INPUT_BAR_MARKERS.any { cd == it || cd.startsWith(it) }) {
                 hit = true
             }
         }
