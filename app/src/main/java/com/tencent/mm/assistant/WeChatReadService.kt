@@ -11,7 +11,6 @@ import com.tencent.mm.assistant.core.AccessibilityNodeTree
 import com.tencent.mm.assistant.core.ChatScreenDetector
 import com.tencent.mm.assistant.core.ExtractResult
 import com.tencent.mm.assistant.core.ProfileInfo
-import com.tencent.mm.assistant.core.ProfileLinker
 import com.tencent.mm.assistant.core.ProfilePageReader
 import com.tencent.mm.assistant.core.ReadStatus
 import com.tencent.mm.assistant.core.ReportGate
@@ -64,16 +63,7 @@ open class WeChatReadService : AccessibilityService() {
     /** 最近一次取到的微信根节点，供去抖后的提取复用。 */
     private var lastRoot: AccessibilityNodeInfo? = null
 
-    /** 最近一次成功识别的单聊会话标题 + 时刻，用于把资料页绑定到来源会话。 */
-    private val profileLinker = ProfileLinker()
 
-    /**
-     * 会话标题 -> 微信号 的内存映射（不落盘）。
-     *
-     * 人工打开过某人的资料页后，后续该会话的上报就能直接带上微信号，
-     * 中控据此精确取任务。进程结束即丢失，但中控侧会持久化这个绑定。
-     */
-    private val wechatIdByTitle = HashMap<String, String>()
 
     private val screenRect = Rect()
 
@@ -190,11 +180,11 @@ open class WeChatReadService : AccessibilityService() {
         val nickname = profile.nickname
 
         // 时间邻接：只有刚从单聊进入资料页时才做绑定，避免隔了很久误绑
-        val linkedTitle = profileLinker.sourceTitleFor(System.currentTimeMillis())
+        val linkedTitle = application.profileLinker.sourceTitleFor(System.currentTimeMillis())
 
         // 学到绑定关系，供后续会话上报直接带上微信号
         if (linkedTitle != null && !wechatId.isNullOrBlank()) {
-            wechatIdByTitle[linkedTitle] = wechatId
+            application.wechatIdByTitle[linkedTitle] = wechatId
         }
 
         val sessionKey = "profile:" + (wechatId ?: nickname ?: "unknown")
@@ -440,7 +430,7 @@ open class WeChatReadService : AccessibilityService() {
 
         // 记录"最近一次单聊"，供资料页做来源绑定
         if (title != null) {
-            profileLinker.onChatSeen(title, System.currentTimeMillis())
+            application.profileLinker.onChatSeen(title, System.currentTimeMillis())
         }
 
         application.logger.readEvent(
@@ -448,7 +438,7 @@ open class WeChatReadService : AccessibilityService() {
             readStatus = readStatus.wireValue,
         )
 
-        val knownWechatId = title?.let { wechatIdByTitle[it] }
+        val knownWechatId = title?.let { application.wechatIdByTitle[it] }
 
         val report = ReadReport(
             serviceAccountId = application.settings.serviceAccountId,

@@ -23,6 +23,21 @@ class AssistantApp : Application() {
     lateinit var overlay: HintOverlayManager
         private set
 
+    /**
+     * 资料页 ↔ 来源会话 的绑定状态。
+     *
+     * 放在 Application（进程级）而不是无障碍服务实例里：
+     * 系统可能在不杀进程的情况下重新绑定无障碍服务（如授予权限后），
+     * 若状态挂在服务实例上会被清零，导致"刚看过会话却绑不上资料页"。
+     */
+    val profileLinker = com.tencent.mm.assistant.core.ProfileLinker()
+
+    /**
+     * 会话标题 -> 微信号 的内存映射（不落盘）。
+     * 同样放在进程级，避免服务重连丢失。
+     */
+    val wechatIdByTitle = HashMap<String, String>()
+
     override fun onCreate() {
         super.onCreate()
         settings = SettingsStore(this)
