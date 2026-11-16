@@ -3,7 +3,6 @@ package com.probe.rootprobe;
 import android.app.Activity;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Process;
 import android.util.Log;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -58,7 +57,7 @@ public class MainActivity extends Activity {
 
     private void runProbe() {
         line("=== ROOT PROBE ===");
-        line("app uid       = " + Process.myUid());
+        line("app uid       = " + android.os.Process.myUid());
         line("Build.TAGS    = " + Build.TAGS);
         line("Build.TYPE    = " + Build.TYPE);
         line("Build.FINGERPRINT = " + Build.FINGERPRINT);
