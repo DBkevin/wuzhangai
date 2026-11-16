@@ -194,7 +194,7 @@ class HintOverlayManager(
                 if (response.candidates.isEmpty()) {
                     list.addView(rowView(appContext.getString(R.string.overlay_empty_candidates)))
                 } else {
-                    response.candidates.take(MAX_CANDIDATES).forEachIndexed { index, candidate ->
+                    response.candidates.take(CenterResponse.MAX_CANDIDATES).forEachIndexed { index, candidate ->
                         list.addView(candidateRow(candidate, index, response))
                     }
                 }
