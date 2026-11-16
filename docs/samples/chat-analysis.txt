@@ -1,0 +1,98 @@
+total nodes: 176
+
+=== NAF 属性节点 ===
+  NAF='true' rid=actionbar_up_indicator class=LinearLayout text='' cd='' bounds=[0,138][137,311]
+  NAF='true' rid=brp class=TextView text='' cd='' bounds=[911,350][1231,508]
+  NAF='true' rid=brp class=TextView text='' cd='' bounds=[878,537][1231,695]
+  NAF='true' rid=brp class=TextView text='' cd='' bounds=[684,1297][1231,1455]
+  NAF='true' rid=brp class=TextView text='' cd='' bounds=[911,1484][1231,1642]
+  NAF='true' rid=brp class=TextView text='' cd='' bounds=[846,2020][1231,2178]
+  NAF='true' rid=brp class=TextView text='' cd='' bounds=[911,2207][1231,2365]
+
+=== text 节点按 resource-id 分组 ===
+  bkl: 12 条 -> ['3"', '4"', '我昨天晚上没穿秋衣秋裤睡觉', '一透风就冷，不透就热', '你是不是得穿加绒裤了', '15"', '3"', '是呀']
+  br1: 2 条 -> ['08:39', '08:45']
+  p6x: 1 条 -> ['按住 说话']
+
+=== content-desc 节点按 resource-id 分组 ===
+  fq: 1 条 -> ['更多信息']
+  bkl: 6 条 -> ['\xa0', '\xa0', '\xa0', '\xa0', '\xa0', '\xa0']
+  bk1: 12 条 -> ['旺仔小李头像', '旺仔小李头像', '大宝贝儿头像', '大宝贝儿头像', '大宝贝儿头像', '旺仔小李头像', '旺仔小李头像', '大宝贝儿头像']
+  bpe: 1 条 -> ['切换到键盘']
+  p6x: 1 条 -> ['按住说话']
+  bqr: 1 条 -> ['表情']
+  bjz: 1 条 -> ['更多功能按钮，已折叠']
+
+=== 关键结构节点（标题栏/列表/输入栏）===
+      ei [FrameLayout ] bounds=[0,138][1440,311]            text='' cd='' clickable=false scrollable=false
+      ef [ViewGroup   ] bounds=[0,138][1440,311]            text='' cd='' clickable=false scrollable=false
+      fq [ImageView   ] bounds=[1238,138][1440,311]         text='' cd='更多信息' clickable=true scrollable=false
+     bp0 [RecyclerView] bounds=[0,311][1440,2941]           text='' cd='' clickable=false scrollable=true
+     bn1 [RelativeLayout] bounds=[0,311][1440,522]            text='' cd='' clickable=false scrollable=false
+     bkj [RelativeLayout] bounds=[0,335][1440,522]            text='' cd='' clickable=false scrollable=false
+     bkl [TextView    ] bounds=[1035,366][1145,492]         text='3"' cd='\xa0' clickable=false scrollable=false
+     bk4 [RelativeLayout] bounds=[1231,335][1418,522]         text='' cd='' clickable=false scrollable=false
+     bk1 [ImageView   ] bounds=[1231,335][1418,522]         text='' cd='旺仔小李头像' clickable=true scrollable=false
+     bn1 [RelativeLayout] bounds=[0,522][1440,709]            text='' cd='' clickable=false scrollable=false
+     bkj [RelativeLayout] bounds=[0,522][1440,709]            text='' cd='' clickable=false scrollable=false
+     bkl [TextView    ] bounds=[1032,553][1145,679]         text='4"' cd='\xa0' clickable=false scrollable=false
+     bk4 [RelativeLayout] bounds=[1231,522][1418,709]         text='' cd='' clickable=false scrollable=false
+     bk1 [ImageView   ] bounds=[1231,522][1418,709]         text='' cd='旺仔小李头像' clickable=true scrollable=false
+     bn1 [RelativeLayout] bounds=[0,709][1440,900]            text='' cd='' clickable=false scrollable=false
+     bkj [LinearLayout] bounds=[0,709][1440,900]            text='' cd='' clickable=false scrollable=false
+     bk4 [RelativeLayout] bounds=[22,709][209,896]            text='' cd='' clickable=false scrollable=false
+     bk1 [ImageView   ] bounds=[22,709][209,896]            text='' cd='大宝贝儿头像' clickable=true scrollable=false
+     bkl [TextView    ] bounds=[209,727][1106,882]          text='我昨天晚上没穿秋衣秋裤睡觉' cd='' clickable=true scrollable=false
+     bn1 [RelativeLayout] bounds=[0,900][1440,1091]           text='' cd='' clickable=false scrollable=false
+     bkj [LinearLayout] bounds=[0,900][1440,1091]           text='' cd='' clickable=false scrollable=false
+     bk4 [RelativeLayout] bounds=[22,900][209,1087]           text='' cd='' clickable=false scrollable=false
+     bk1 [ImageView   ] bounds=[22,900][209,1087]           text='' cd='大宝贝儿头像' clickable=true scrollable=false
+     bkl [TextView    ] bounds=[209,918][908,1073]          text='一透风就冷，不透就热' cd='' clickable=true scrollable=false
+     bn1 [RelativeLayout] bounds=[0,1091][1440,1282]          text='' cd='' clickable=false scrollable=false
+     bkj [LinearLayout] bounds=[0,1091][1440,1282]          text='' cd='' clickable=false scrollable=false
+     bk4 [RelativeLayout] bounds=[22,1091][209,1278]          text='' cd='' clickable=false scrollable=false
+     bk1 [ImageView   ] bounds=[22,1091][209,1278]          text='' cd='大宝贝儿头像' clickable=true scrollable=false
+     bkl [TextView    ] bounds=[209,1109][923,1264]         text='你是不是得穿加绒裤了' cd='' clickable=true scrollable=false
+     bn1 [RelativeLayout] bounds=[0,1282][1440,1469]          text='' cd='' clickable=false scrollable=false
+     bkj [RelativeLayout] bounds=[0,1282][1440,1469]          text='' cd='' clickable=false scrollable=false
+     bkl [TextView    ] bounds=[1013,1313][1145,1439]       text='15"' cd='\xa0' clickable=false scrollable=false
+     bk4 [RelativeLayout] bounds=[1231,1282][1418,1469]       text='' cd='' clickable=false scrollable=false
+     bk1 [ImageView   ] bounds=[1231,1282][1418,1469]       text='' cd='旺仔小李头像' clickable=true scrollable=false
+     bn1 [RelativeLayout] bounds=[0,1469][1440,1656]          text='' cd='' clickable=false scrollable=false
+     bkj [RelativeLayout] bounds=[0,1469][1440,1656]          text='' cd='' clickable=false scrollable=false
+     bkl [TextView    ] bounds=[1035,1500][1145,1626]       text='3"' cd='\xa0' clickable=false scrollable=false
+     bk4 [RelativeLayout] bounds=[1231,1469][1418,1656]       text='' cd='' clickable=false scrollable=false
+     bk1 [ImageView   ] bounds=[1231,1469][1418,1656]       text='' cd='旺仔小李头像' clickable=true scrollable=false
+     bn1 [RelativeLayout] bounds=[0,1656][1440,1847]          text='' cd='' clickable=false scrollable=false
+     bkj [LinearLayout] bounds=[0,1656][1440,1847]          text='' cd='' clickable=false scrollable=false
+     bk4 [RelativeLayout] bounds=[22,1656][209,1843]          text='' cd='' clickable=false scrollable=false
+     bk1 [ImageView   ] bounds=[22,1656][209,1843]          text='' cd='大宝贝儿头像' clickable=true scrollable=false
+     bkl [TextView    ] bounds=[209,1674][435,1829]         text='是呀' cd='' clickable=true scrollable=false
+     bn1 [RelativeLayout] bounds=[0,1847][1440,2192]          text='' cd='' clickable=false scrollable=false
+     br1 [TextView    ] bounds=[641,1847][799,2005]         text='08:39' cd='' clickable=true scrollable=false
+     bkj [RelativeLayout] bounds=[0,2005][1440,2192]          text='' cd='' clickable=false scrollable=false
+     bkl [TextView    ] bounds=[1034,2036][1145,2162]       text='5"' cd='\xa0' clickable=false scrollable=false
+     bk4 [RelativeLayout] bounds=[1231,2005][1418,2192]       text='' cd='' clickable=false scrollable=false
+     bk1 [ImageView   ] bounds=[1231,2005][1418,2192]       text='' cd='旺仔小李头像' clickable=true scrollable=false
+     bn1 [RelativeLayout] bounds=[0,2192][1440,2379]          text='' cd='' clickable=false scrollable=false
+     bkj [RelativeLayout] bounds=[0,2192][1440,2379]          text='' cd='' clickable=false scrollable=false
+     bkl [TextView    ] bounds=[1035,2223][1145,2349]       text='3"' cd='\xa0' clickable=false scrollable=false
+     bk4 [RelativeLayout] bounds=[1231,2192][1418,2379]       text='' cd='' clickable=false scrollable=false
+     bk1 [ImageView   ] bounds=[1231,2192][1418,2379]       text='' cd='旺仔小李头像' clickable=true scrollable=false
+     bn1 [RelativeLayout] bounds=[0,2379][1440,2728]          text='' cd='' clickable=false scrollable=false
+     br1 [TextView    ] bounds=[642,2379][797,2537]         text='08:45' cd='' clickable=true scrollable=false
+     bkj [LinearLayout] bounds=[0,2537][1440,2728]          text='' cd='' clickable=false scrollable=false
+     bk4 [RelativeLayout] bounds=[22,2537][209,2724]          text='' cd='' clickable=false scrollable=false
+     bk1 [ImageView   ] bounds=[22,2537][209,2724]          text='' cd='大宝贝儿头像' clickable=true scrollable=false
+     bkl [TextView    ] bounds=[209,2555][496,2710]         text='下雨啊' cd='' clickable=true scrollable=false
+     bn1 [RelativeLayout] bounds=[0,2728][1440,2919]          text='' cd='' clickable=false scrollable=false
+     bkj [LinearLayout] bounds=[0,2728][1440,2919]          text='' cd='' clickable=false scrollable=false
+     bkl [TextView    ] bounds=[1005,2746][1231,2901]       text='嗯呐' cd='' clickable=true scrollable=false
+     bk4 [RelativeLayout] bounds=[1231,2728][1418,2915]       text='' cd='' clickable=false scrollable=false
+     bk1 [ImageView   ] bounds=[1231,2728][1418,2915]       text='' cd='旺仔小李头像' clickable=true scrollable=false
+     bpe [ImageButton ] bounds=[7,2964][166,3123]           text='' cd='切换到键盘' clickable=true scrollable=false
+     p6x [Button      ] bounds=[173,2964][1123,3122]        text='按住 说话' cd='按住说话' clickable=true scrollable=false
+     bqr [ImageButton ] bounds=[1130,2964][1289,3123]       text='' cd='表情' clickable=true scrollable=false
+     bjz [ImageButton ] bounds=[1274,2964][1433,3123]       text='' cd='更多功能按钮，已折叠' clickable=true scrollable=false
+
+=== hint 非空节点 ===

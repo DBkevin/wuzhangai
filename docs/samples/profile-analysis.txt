@@ -1,0 +1,35 @@
+total nodes: 61
+
+=== 非空 text ===
+       cf8 [TextView  ] '大宝贝儿'  bounds=[368,347][684,505]
+       cf7 [TextView  ] '昵称:  小小林'  bounds=[310,454][714,613]
+       cff [TextView  ] '微信号:  __LINXIAO'  bounds=[310,541][880,700]
+       cf6 [TextView  ] '地区:  河南  驻马店'  bounds=[310,628][854,787]
+       o3b [TextView  ] '发消息'  bounds=[686,1492][869,1574]
+       o3b [TextView  ] '音视频通话'  bounds=[625,1694][930,1776]
+
+=== 非空 content-desc ===
+       cey [ImageView ] '头像'
+       cfc [TextView  ] '女'
+       cf7 [TextView  ] '昵称:  小小林'
+       cf6 [TextView  ] '地区:  河南  驻马店'
+       m7k [LinearLayout] '朋友圈个人相册,共0张'
+        fr [ImageView ] '编辑备注'
+        fs [ImageView ] '更多信息'
+
+=== NAF 节点 ===
+  NAF=true rid=cai text=''
+  NAF=true rid=n0e text=''
+  NAF=true rid=n0e text=''
+  NAF=true rid=n0e text=''
+  NAF=true rid=n0e text=''
+  NAF=true rid=n0e text=''
+  NAF=true rid=title text=''
+  NAF=true rid= text=''
+  NAF=true rid=actionbar_up_indicator text=''
+
+=== clickable 且有文本/描述的节点 ===
+       cey '头像'
+       m7k '朋友圈个人相册,共0张'
+        fr '编辑备注'
+        fs '更多信息'

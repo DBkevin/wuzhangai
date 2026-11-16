@@ -1,0 +1,126 @@
+file: D:\project\wuzhanai\docs\samples\chat-page.xml
+total nodes: 176
+
+=== 属性出现次数 ===
+  index: 176
+  text: 176
+  resource-id: 176
+  class: 176
+  package: 176
+  content-desc: 176
+  checkable: 176
+  checked: 176
+  clickable: 176
+  enabled: 176
+  focusable: 176
+  focused: 176
+  scrollable: 176
+  long-clickable: 176
+  password: 176
+  selected: 176
+  bounds: 176
+  drawing-order: 176
+  hint: 176
+  NAF: 7
+
+=== resource-id 汇总 ===
+  com.tencent.mm:id/bn1  x12  [RelativeLayout]  ''
+  com.tencent.mm:id/bkj  x12  [RelativeLayout]  ''
+  com.tencent.mm:id/bkl  x12  [TextView]  '3"'
+  com.tencent.mm:id/bk4  x12  [RelativeLayout]  ''
+  com.tencent.mm:id/bk1  x12  [ImageView]  '旺仔小李头像'
+  com.tencent.mm:id/brr  x6  [FrameLayout]  ''
+  com.tencent.mm:id/brq  x6  [FrameLayout]  ''
+  com.tencent.mm:id/brp  x6  [TextView]  ''
+  com.tencent.mm:id/br1  x2  [TextView]  '08:39'
+  com.tencent.mm:id/jxo  x1  [FrameLayout]  ''
+  com.tencent.mm:id/jv6  x1  [FrameLayout]  ''
+  com.tencent.mm:id/ut7  x1  [FrameLayout]  ''
+  com.tencent.mm:id/bks  x1  [LinearLayout]  ''
+  com.tencent.mm:id/nsv  x1  [FrameLayout]  ''
+  com.tencent.mm:id/jlt  x1  [FrameLayout]  ''
+  com.tencent.mm:id/bkb  x1  [LinearLayout]  ''
+  com.tencent.mm:id/ei  x1  [FrameLayout]  ''
+  com.tencent.mm:id/ef  x1  [ViewGroup]  ''
+  com.tencent.mm:id/cob  x1  [RelativeLayout]  ''
+  com.tencent.mm:id/actionbar_up_indicator  x1  [LinearLayout]  ''
+  com.tencent.mm:id/gp  x1  [LinearLayout]  ''
+  com.tencent.mm:id/obq  x1  [LinearLayout]  ''
+  com.tencent.mm:id/coz  x1  [LinearLayout]  ''
+  com.tencent.mm:id/coy  x1  [LinearLayout]  ''
+  com.tencent.mm:id/fq  x1  [ImageView]  '更多信息'
+  com.tencent.mm:id/bqh  x1  [FrameLayout]  ''
+  com.tencent.mm:id/bls  x1  [FrameLayout]  ''
+  com.tencent.mm:id/bqg  x1  [LinearLayout]  ''
+  com.tencent.mm:id/bki  x1  [FrameLayout]  ''
+  com.tencent.mm:id/bl0  x1  [FrameLayout]  ''
+  com.tencent.mm:id/jln  x1  [FrameLayout]  ''
+  com.tencent.mm:id/v49  x1  [FrameLayout]  ''
+  com.tencent.mm:id/bm6  x1  [FrameLayout]  ''
+  com.tencent.mm:id/bp0  x1  [RecyclerView]  ''
+  com.tencent.mm:id/bk_  x1  [FrameLayout]  ''
+  com.tencent.mm:id/bka  x1  [ImageView]  ''
+  com.tencent.mm:id/k52  x1  [FrameLayout]  ''
+  com.tencent.mm:id/bfp  x1  [RelativeLayout]  ''
+  com.tencent.mm:id/bl8  x1  [LinearLayout]  ''
+  com.tencent.mm:id/ssr  x1  [LinearLayout]  ''
+  com.tencent.mm:id/bl9  x1  [LinearLayout]  ''
+  com.tencent.mm:id/qhl  x1  [LinearLayout]  ''
+  com.tencent.mm:id/bpe  x1  [ImageButton]  '切换到键盘'
+  com.tencent.mm:id/unu  x1  [RelativeLayout]  ''
+  com.tencent.mm:id/p6x  x1  [Button]  '按住 说话'
+  com.tencent.mm:id/bqr  x1  [ImageButton]  '表情'
+  com.tencent.mm:id/bqn  x1  [LinearLayout]  ''
+  com.tencent.mm:id/su3  x1  [RelativeLayout]  ''
+  com.tencent.mm:id/bjz  x1  [ImageButton]  '更多功能按钮，已折叠'
+  android:id/statusBarBackground  x1  [View]  ''
+
+=== text 节点分组 ===
+  bkl: 12 条 -> ['3"', '4"', '我昨天晚上没穿秋衣秋裤睡觉', '一透风就冷，不透就热', '你是不是得穿加绒裤了', '15"', '3"', '是呀']
+  br1: 2 条 -> ['08:39', '08:45']
+  p6x: 1 条 -> ['按住 说话']
+
+=== content-desc 节点分组 ===
+  fq: 1 条 -> ['更多信息']
+  bkl: 6 条 -> ['\xa0', '\xa0', '\xa0', '\xa0', '\xa0', '\xa0']
+  bk1: 12 条 -> ['旺仔小李头像', '旺仔小李头像', '大宝贝儿头像', '大宝贝儿头像', '大宝贝儿头像', '旺仔小李头像', '旺仔小李头像', '大宝贝儿头像']
+  bpe: 1 条 -> ['切换到键盘']
+  p6x: 1 条 -> ['按住说话']
+  bqr: 1 条 -> ['表情']
+  bjz: 1 条 -> ['更多功能按钮，已折叠']
+
+=== NAF 节点（微信私有属性）===
+  NAF=true rid=actionbar_up_indicator class=LinearLayout text='' cd=''
+  NAF=true rid=brp class=TextView text='' cd=''
+  NAF=true rid=brp class=TextView text='' cd=''
+  NAF=true rid=brp class=TextView text='' cd=''
+  NAF=true rid=brp class=TextView text='' cd=''
+  NAF=true rid=brp class=TextView text='' cd=''
+  NAF=true rid=brp class=TextView text='' cd=''
+
+=== clickable 且有文本/描述的节点 ===
+          fq '更多信息'
+         bk1 '旺仔小李头像'
+         bk1 '旺仔小李头像'
+         bk1 '大宝贝儿头像'
+         bkl '我昨天晚上没穿秋衣秋裤睡觉'
+         bk1 '大宝贝儿头像'
+         bkl '一透风就冷，不透就热'
+         bk1 '大宝贝儿头像'
+         bkl '你是不是得穿加绒裤了'
+         bk1 '旺仔小李头像'
+         bk1 '旺仔小李头像'
+         bk1 '大宝贝儿头像'
+         bkl '是呀'
+         br1 '08:39'
+         bk1 '旺仔小李头像'
+         bk1 '旺仔小李头像'
+         br1 '08:45'
+         bk1 '大宝贝儿头像'
+         bkl '下雨啊'
+         bkl '嗯呐'
+         bk1 '旺仔小李头像'
+         bpe '切换到键盘'
+         p6x '按住 说话'
+         bqr '表情'
+         bjz '更多功能按钮，已折叠'

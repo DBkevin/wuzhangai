@@ -97,6 +97,27 @@ class CoreLogicTest {
     }
 
     @Test
+    fun `voice message durations are filtered`() {
+        // 微信语音消息在 bkl 节点里的 text 就是时长（实测 "3\"" / "15\""）
+        assertTrue(MessageTextFilter.isPlaceholder("3\""))
+        assertTrue(MessageTextFilter.isPlaceholder("15\""))
+        assertTrue(MessageTextFilter.isPlaceholder("3'"))
+        assertFalse(MessageTextFilter.isDisplayableMessage("3\""))
+        assertFalse(MessageTextFilter.isDisplayableMessage("15\""))
+        // 正常文本里带引号不能被误杀
+        assertTrue(MessageTextFilter.isDisplayableMessage("他说\"好的\""))
+    }
+
+    @Test
+    fun `weekly timestamp separators are filtered`() {
+        // 实测聊天页时间分隔形如 "周五 15:44" / "08:39"
+        assertTrue(MessageTextFilter.isTimestamp("周五 15:44"))
+        assertTrue(MessageTextFilter.isTimestamp("周三 08:39"))
+        assertTrue(MessageTextFilter.isTimestamp("08:39"))
+        assertFalse(MessageTextFilter.isTimestamp("下周五见"))
+    }
+
+    @Test
     fun `system hints and ui noise are filtered`() {
         assertTrue(MessageTextFilter.isSystemHint("你撤回了一条消息"))
         assertTrue(MessageTextFilter.isSystemHint("对方开启了朋友验证"))

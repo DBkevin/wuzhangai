@@ -28,6 +28,8 @@ object MessageTextFilter {
     private val PLACEHOLDER_REGEXES = listOf(
         Regex("""^\[[^\[\]]{1,8}]$"""),
         Regex("""^【[^【】]{1,8}】$"""),
+        // 微信语音消息在 bkl 节点里的 text 是时长，如 3" / 15" / 3' 
+        Regex("""^\d{1,3}\s*["'″']$"""),
     )
 
     /** 微信系统提示（含撤回、验证、群操作等）。 */
