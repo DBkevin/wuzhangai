@@ -1,22 +1,30 @@
 package com.tencent.mm.assistant.overlay
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import com.tencent.mm.assistant.R
+import com.tencent.mm.assistant.net.Candidate
+import com.tencent.mm.assistant.net.CandidateFeedback
 import com.tencent.mm.assistant.net.CenterAction
 import com.tencent.mm.assistant.net.CenterClient
 import com.tencent.mm.assistant.net.CenterResponse
-import com.tencent.mm.assistant.net.CandidateFeedback
 import com.tencent.mm.assistant.util.SafeLogger
 import com.tencent.mm.assistant.util.SettingsStore
 
@@ -26,11 +34,14 @@ import com.tencent.mm.assistant.util.SettingsStore
  * 边界（PRD 模块 3）：
  *  * 仅在收到中控响应且 action != none 时显示；
  *  * TYPE_APPLICATION_OVERLAY + FLAG_NOT_FOCUSABLE：绝不抢占微信输入焦点；
- *  * 窗口尺寸为包裹内容、宽度上限 40% 屏宽，贴屏幕右侧垂直居中，
- *    不会落入底部输入框区域（也不提供拖动，杜绝被拖进输入区）；
+ *  * 固定宽度（屏宽 40%）、贴屏幕右侧垂直居中，不提供拖动，不会落入底部输入框；
  *  * 同一会话同时只存在一个悬浮窗，新响应到来时先移除旧窗口再展示；
- *  * 点击按钮只会把"用户的选择"POST 到中控 /feedback，然后关闭悬浮窗 ——
+ *  * 点击按钮只把"用户的选择"POST 到中控 /feedback，然后关闭 ——
  *    绝不触碰微信输入框，绝不发送任何微信消息。
+ *
+ * 交互增强：
+ *  * 内容超出最大高度时可**滚动**（ScrollView + 高度上限）；
+ *  * 提示文本 / 候选条目**点按即复制**到系统剪贴板（只复制，不注入任何应用）。
  */
 class HintOverlayManager(
     private val appContext: Context,
@@ -72,17 +83,21 @@ class HintOverlayManager(
 
         removeInternal()
 
-        val view = buildView(response)
+        val metrics = appContext.resources.displayMetrics
+        // 固定宽度：内容再多也不改变窗口宽度，避免窗口"跳动"
+        val boxWidth = (metrics.widthPixels * MAX_WIDTH_RATIO).toInt()
+        // 内容最大高度：超出后内部滚动，窗口不会顶到屏幕外
+        val maxScrollHeight = (metrics.heightPixels * MAX_HEIGHT_RATIO).toInt()
+
+        val view = buildView(response, maxScrollHeight)
             ?: run {
                 logger.event("overlay_build_failed")
                 return
             }
 
-        val metrics = appContext.resources.displayMetrics
-        val maxWidth = (metrics.widthPixels * MAX_WIDTH_RATIO).toInt()
         val params = WindowManager.LayoutParams(
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            boxWidth,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
@@ -91,14 +106,6 @@ class HintOverlayManager(
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
             x = dp(RIGHT_MARGIN_DP)
             y = 0
-        }
-        // 包裹内容 + 最大宽度限制：用 post 再量一次，超出则压回。
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        if (view.measuredWidth > maxWidth) {
-            params.width = maxWidth
         }
 
         try {
@@ -146,9 +153,8 @@ class HintOverlayManager(
 
     // ---------------------------------------------------------------- 视图构建
 
-    private fun buildView(response: CenterResponse): View? {
-        val context = appContext
-        val root = LinearLayout(context).apply {
+    private fun buildView(response: CenterResponse, maxScrollHeight: Int): View? {
+        val root = LinearLayout(appContext).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(10), dp(14), dp(10))
             background = cardBackground()
@@ -156,33 +162,44 @@ class HintOverlayManager(
 
         when (response.action) {
             CenterAction.SHOW_HINT -> {
-                root.addView(titleView(context, context.getString(R.string.overlay_title_hint)))
-                root.addView(bodyView(context, response.hint ?: context.getString(R.string.overlay_empty_hint)))
-                root.addView(button(context, context.getString(R.string.overlay_btn_got_it)) {
-                    dismiss()
-                })
+                val hint = response.hint ?: appContext.getString(R.string.overlay_empty_hint)
+                root.addView(titleView(appContext.getString(R.string.overlay_title_hint)))
+
+                val body = bodyView(hint).apply {
+                    // 点按整段提示即复制
+                    isClickable = true
+                    setOnClickListener { copyToClipboard(hint) }
+                }
+                root.addView(wrapScroll(body, maxScrollHeight))
+                root.addView(tapHintView())
+                root.addView(button(appContext.getString(R.string.overlay_btn_got_it)) { dismiss() })
             }
 
             CenterAction.SHOW_CANDIDATES -> {
-                root.addView(titleView(context, context.getString(R.string.overlay_title_candidates)))
+                root.addView(titleView(appContext.getString(R.string.overlay_title_candidates)))
+
+                val column = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
                 if (response.candidates.isEmpty()) {
-                    root.addView(bodyView(context, context.getString(R.string.overlay_empty_candidates)))
+                    column.addView(bodyView(appContext.getString(R.string.overlay_empty_candidates)))
                 } else {
                     response.candidates.forEachIndexed { index, candidate ->
-                        root.addView(candidateCard(context, candidate, index, response))
+                        column.addView(candidateCard(candidate, index, response))
                     }
                 }
-                root.addView(button(context, context.getString(R.string.overlay_btn_close)) {
-                    dismiss()
-                })
+                root.addView(wrapScroll(column, maxScrollHeight))
+                root.addView(tapHintView())
+                root.addView(button(appContext.getString(R.string.overlay_btn_close)) { dismiss() })
             }
 
             CenterAction.NO_MATCH -> {
-                root.addView(titleView(context, context.getString(R.string.overlay_title_no_match)))
-                root.addView(bodyView(context, context.getString(R.string.overlay_no_match_body)))
-                root.addView(button(context, context.getString(R.string.overlay_btn_close)) {
-                    dismiss()
-                })
+                root.addView(titleView(appContext.getString(R.string.overlay_title_no_match)))
+                root.addView(
+                    wrapScroll(
+                        bodyView(appContext.getString(R.string.overlay_no_match_body)),
+                        maxScrollHeight,
+                    ),
+                )
+                root.addView(button(appContext.getString(R.string.overlay_btn_close)) { dismiss() })
             }
 
             CenterAction.NONE -> return null
@@ -190,28 +207,63 @@ class HintOverlayManager(
         return root
     }
 
-    private fun candidateCard(
-        context: Context,
-        candidate: com.tencent.mm.assistant.net.Candidate,
-        index: Int,
-        response: CenterResponse,
-    ): View {
-        val card = LinearLayout(context).apply {
+    /**
+     * 把内容包进可滚动容器，并限制最大高度。
+     *
+     * 高度取「内容自然高度」与「上限」的较小值：
+     *  * 内容不多 -> 窗口自适应，不出现多余空白
+     *  * 内容很多 -> 固定在上限高度，内部可上下滚动
+     */
+    private fun wrapScroll(child: View, maxHeight: Int): ScrollView {
+        val scroll = ScrollView(appContext).apply {
+            isFillViewport = false
+            isVerticalScrollBarEnabled = true
+            addView(
+                child,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+        child.measure(
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        val natural = child.measuredHeight
+        val height = if (natural in 1 until maxHeight) natural else maxHeight
+        scroll.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            height,
+        )
+        return scroll
+    }
+
+    private fun candidateCard(candidate: Candidate, index: Int, response: CenterResponse): View {
+        val card = LinearLayout(appContext).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(8), dp(10), dp(8))
             background = candidateBackground()
+            // 点按卡片即复制该条候选
+            isClickable = true
+            setOnClickListener {
+                copyToClipboard(
+                    buildString {
+                        append(candidate.label)
+                        append('\n')
+                        append(appContext.getString(R.string.overlay_candidate_meta_fmt, (candidate.confidence * 100).toInt(), candidate.evidence))
+                    },
+                )
+            }
         }
 
         card.addView(
-            bodyView(
-                context,
-                context.getString(R.string.overlay_candidate_label_fmt, candidate.label),
-            ).apply { setTypeface(typeface, android.graphics.Typeface.BOLD) },
+            bodyView(appContext.getString(R.string.overlay_candidate_label_fmt, candidate.label))
+                .apply { setTypeface(typeface, Typeface.BOLD) },
         )
         card.addView(
             bodyView(
-                context,
-                context.getString(
+                appContext.getString(
                     R.string.overlay_candidate_meta_fmt,
                     (candidate.confidence * 100).toInt(),
                     candidate.evidence,
@@ -219,22 +271,20 @@ class HintOverlayManager(
             ),
         )
 
-        val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
+        val row = LinearLayout(appContext).apply { orientation = LinearLayout.HORIZONTAL }
         row.addView(
-            button(context, context.getString(R.string.overlay_btn_confirm)) {
+            button(appContext.getString(R.string.overlay_btn_confirm)) {
                 sendFeedback(response, index, candidate, accepted = true)
                 dismiss()
             },
-            LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
         row.addView(
-            button(context, context.getString(R.string.overlay_btn_reject)) {
+            button(appContext.getString(R.string.overlay_btn_reject)) {
                 sendFeedback(response, index, candidate, accepted = false)
                 dismiss()
             },
-            LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
         card.addView(row)
         return card
@@ -243,7 +293,7 @@ class HintOverlayManager(
     private fun sendFeedback(
         response: CenterResponse,
         index: Int,
-        candidate: com.tencent.mm.assistant.net.Candidate,
+        candidate: Candidate,
         accepted: Boolean,
     ) {
         // 只回传用户的选择与候选标识；绝不包含微信输入框内容，也不触发任何自动发送。
@@ -260,29 +310,60 @@ class HintOverlayManager(
         centerClient.feedback(feedback)
     }
 
+    // ---------------------------------------------------------------- 复制
+
+    /**
+     * 复制到系统剪贴板。
+     *
+     * 只写剪贴板，不向任何应用注入输入事件，也不触发粘贴。
+     * 用户需要自己长按输入框粘贴 —— 这一步永远由人工完成。
+     */
+    private fun copyToClipboard(text: String) {
+        try {
+            val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            if (cm == null) {
+                logger.event("clipboard_unavailable")
+                return
+            }
+            cm.setPrimaryClip(ClipData.newPlainText("kf_hint", text))
+            Toast.makeText(appContext, R.string.overlay_copied, Toast.LENGTH_SHORT).show()
+            logger.event("overlay_copied")
+        } catch (_: Throwable) {
+            logger.event("clipboard_failed")
+        }
+    }
+
     // ---------------------------------------------------------------- 视图工具
 
-    private fun titleView(context: Context, text: String): TextView =
-        TextView(context).apply {
+    private fun titleView(text: String): TextView =
+        TextView(appContext).apply {
             this.text = text
             setTextColor(Color.WHITE)
             textSize = 15f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTypeface(typeface, Typeface.BOLD)
             setPadding(0, dp(2), 0, dp(6))
         }
 
-    private fun bodyView(context: Context, text: String): TextView =
-        TextView(context).apply {
+    private fun bodyView(text: String): TextView =
+        TextView(appContext).apply {
             this.text = text
             setTextColor(0xFFDDDDDD.toInt())
             textSize = 13f
-            maxLines = 6
-            ellipsize = android.text.TextUtils.TruncateAt.END
+            ellipsize = TextUtils.TruncateAt.END
             setPadding(0, dp(1), 0, dp(4))
         }
 
-    private fun button(context: Context, text: String, onClick: () -> Unit): Button =
-        Button(context).apply {
+    /** 小字提示：告诉用户可以点按复制。 */
+    private fun tapHintView(): TextView =
+        TextView(appContext).apply {
+            text = appContext.getString(R.string.overlay_tap_to_copy)
+            setTextColor(0xFF888888.toInt())
+            textSize = 10f
+            setPadding(0, 0, 0, dp(4))
+        }
+
+    private fun button(text: String, onClick: () -> Unit): Button =
+        Button(appContext).apply {
             this.text = text
             textSize = 13f
             isAllCaps = false
@@ -307,8 +388,11 @@ class HintOverlayManager(
         android.provider.Settings.canDrawOverlays(appContext)
 
     companion object {
-        /** 悬浮窗最大宽度：不超过屏宽 40%（PRD 模块 3.3）。 */
+        /** 悬浮窗固定宽度：屏宽 40%（PRD 模块 3.3 上限）。 */
         const val MAX_WIDTH_RATIO = 0.40f
+
+        /** 内容区最大高度：屏高 55%，超出后内部滚动。 */
+        const val MAX_HEIGHT_RATIO = 0.55f
 
         /** 距屏幕右缘的边距（dp）。固定右侧居中，不提供拖动，杜绝落入底部输入框区域。 */
         const val RIGHT_MARGIN_DP = 8
