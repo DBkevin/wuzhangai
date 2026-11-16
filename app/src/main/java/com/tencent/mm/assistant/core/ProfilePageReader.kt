@@ -56,7 +56,7 @@ object ProfilePageReader {
         try {
             root.forEachNode(maxDepth = PROBE_DEPTH, maxNodes = PROBE_NODES) { node, _ ->
                 val t = node.text?.toString()?.trim().orEmpty()
-                if (t.isNotEmpty() && t.length <= 60) texts.add(t)
+                if (t.isNotEmpty() && t.length <= MAX_COLLECTED_TEXT_LEN) texts.add(t)
             }
         } catch (_: Throwable) {
             return null
@@ -91,7 +91,7 @@ object ProfilePageReader {
         }
 
         val nickname = texts.firstOrNull { t ->
-            t.length in 1..24 &&
+            t.length in 1..MAX_NICKNAME_LEN &&
                 !LABELS.contains(t) &&
                 !isFieldLine(t) &&
                 !looksLikeWechatId(t)
@@ -115,4 +115,15 @@ object ProfilePageReader {
 
     private const val PROBE_DEPTH = 25
     private const val PROBE_NODES = 260
+
+    /**
+     * 收集文本行的长度上限。
+     *
+     * 微信允许超长备注（实测有人用整句做备注），过小的上限会把长备注整行丢掉，
+     * 导致昵称解析失败。200 足够覆盖正常备注，同时仍能排除异常长文本。
+     */
+    private const val MAX_COLLECTED_TEXT_LEN = 200
+
+    /** 昵称/备注长度上限：放宽到 64，避免长备注被丢弃。 */
+    private const val MAX_NICKNAME_LEN = 64
 }

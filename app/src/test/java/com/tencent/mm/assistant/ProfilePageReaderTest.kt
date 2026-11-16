@@ -115,4 +115,44 @@ class ProfilePageReaderTest {
         assertFalse(reader.looksLikeWechatId("ab"))          // 太短
         assertFalse(reader.looksLikeWechatId("a".repeat(30))) // 太长
     }
+
+    // ------------------------------------------------------------ 超长备注
+
+    @Test
+    fun `long remark is read in full`() {
+        // 微信允许把整句作为备注，不能被长度上限截断或丢弃
+        val longRemark = "王强-8231-沪-微信hxzxxy999-订单12345-2026春季复诊-备注很长很长很长"
+        val texts = listOf(
+            longRemark,
+            "昵称:  小小林",
+            "微信号:  hxzxxy999",
+            "地区:  上海  浦东",
+            "发消息",
+            "音视频通话",
+        )
+        val info = reader.parse(texts)
+        assertNotNull(info)
+        assertEquals(longRemark, info!!.nickname)
+        assertEquals("hxzxxy999", info.wechatId)
+    }
+
+    @Test
+    fun `remark up to 64 chars is accepted`() {
+        val remark64 = "备".repeat(64)
+        val info = reader.parse(
+            listOf(remark64, "微信号:  hxzxxy999", "发消息"),
+        )
+        assertNotNull(info)
+        assertEquals(remark64, info!!.nickname)
+    }
+
+    @Test
+    fun `absurdly long text is not treated as nickname`() {
+        val tooLong = "备".repeat(65)
+        val info = reader.parse(
+            listOf(tooLong, "微信号:  hxzxxy999", "发消息"),
+        )
+        assertNotNull(info)
+        assertNull(info!!.nickname)
+    }
 }

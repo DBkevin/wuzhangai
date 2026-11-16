@@ -30,8 +30,13 @@ object ChatScreenDetector {
     private const val TITLE_CENTER_MIN_RATIO = 0.25f
     private const val TITLE_CENTER_MAX_RATIO = 0.75f
 
-    /** 标题长度上限，超过基本是正文而不是标题。 */
-    private const val MAX_TITLE_LENGTH = 32
+    /**
+     * 标题栏文本长度上限。
+     *
+     * 备注可以很长（实测有人用整句做备注），上限过小会直接丢掉标题。
+     * 这里放宽到 64，仅用于排除"整段正文被当成标题"的极端情况。
+     */
+    private const val MAX_TITLE_LENGTH = 64
 
     /** 消息容器至少要占屏幕高度这么大。 */
     private const val MESSAGE_CONTAINER_MIN_HEIGHT_RATIO = 0.35f
