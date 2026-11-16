@@ -396,9 +396,16 @@ class HintOverlayManager(
             setOnClickListener { onClick() }
         }
 
+    /**
+     * 面板背景：半透明深色。
+     *
+     * 0xC8 = 200/255 ≈ 78% 不透明 —— 既能看清文字，又能透出下面的微信界面，
+     * 便于对照上下文。若需要更透可调到 0xB0，更实可调到 0xE0。
+     */
     private fun cardBackground(): GradientDrawable = GradientDrawable().apply {
         cornerRadius = dp(8f).toFloat()
-        setColor(0xF2101010.toInt())
+        setColor(0xC8101010.toInt())
+        setStroke(dp(1), 0x40FFFFFF)
     }
 
     private fun statusBarHeight(): Int {
