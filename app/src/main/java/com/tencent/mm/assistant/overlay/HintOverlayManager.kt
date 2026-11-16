@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.tencent.mm.assistant.R
@@ -168,25 +169,17 @@ class HintOverlayManager(
         header.addView(smallButton(appContext.getString(R.string.overlay_btn_close)) { dismiss() })
         root.addView(header)
 
-        // 中间：条目列表。
-        //
-        // 注意：这里刻意**不用 ScrollView**。
-        // 实测在 TYPE_APPLICATION_OVERLAY 窗口里，ScrollView 会吞掉子控件的点击事件
-        // （头部按钮在 ScrollView 外，点击正常；列表内的按钮完全收不到点击）。
-        // 因此改为固定高度列表 + 限制条目数，保证每条右侧的「复制」按钮可靠可点。
-        val list = LinearLayout(appContext).apply {
-            orientation = LinearLayout.VERTICAL
-            clipChildren = true
-        }
+        // 中间：可滚动的条目列表
+        val list = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
         when (response.action) {
             CenterAction.SHOW_HINT -> {
                 // 提示按行拆成"一条条"，每条右侧一个复制按钮
                 val hint = response.hint ?: appContext.getString(R.string.overlay_empty_hint)
                 val items = hint.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
-                val shown = if (items.isEmpty()) listOf(hint) else items.take(MAX_ROWS)
-                shown.forEach { list.addView(rowView(it)) }
-                if (items.size > MAX_ROWS) {
-                    list.addView(moreView(items.size - MAX_ROWS))
+                if (items.isEmpty()) {
+                    list.addView(rowView(hint))
+                } else {
+                    items.forEach { list.addView(rowView(it)) }
                 }
             }
 
@@ -207,8 +200,21 @@ class HintOverlayManager(
             CenterAction.NONE -> return null
         }
 
+        // 条目多时可上下滚动。实测真实手指点击在 ScrollView 内正常
+        // （之前"点不动"是 ADB 注入的触摸被 MIUI 安全策略拦截，与 ScrollView 无关）。
+        val scroll = ScrollView(appContext).apply {
+            isFillViewport = false
+            isVerticalScrollBarEnabled = true
+            addView(
+                list,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
         root.addView(
-            list,
+            scroll,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
         )
 
@@ -216,15 +222,6 @@ class HintOverlayManager(
         root.addView(footerView())
         return root
     }
-
-    /** 条目过多时的提示行（不参与复制）。 */
-    private fun moreView(remaining: Int): View =
-        TextView(appContext).apply {
-            text = appContext.getString(R.string.overlay_more_rows_fmt, remaining)
-            setTextColor(0xFFAAAAAA.toInt())
-            textSize = 11f
-            setPadding(0, dp(2), 0, dp(2))
-        }
 
     private fun titleFor(response: CenterResponse): String = when (response.action) {
         CenterAction.SHOW_HINT -> appContext.getString(R.string.overlay_title_hint)
@@ -241,7 +238,6 @@ class HintOverlayManager(
             setPadding(0, dp(4), 0, dp(4))
             isClickable = true
             setOnClickListener {
-                android.util.Log.i("KfReadOnly", "ROW_CLICK")
                 copyToClipboard(text)
             }
         }
@@ -318,7 +314,6 @@ class HintOverlayManager(
             minimumWidth = 0
             setPadding(dp(10), dp(2), dp(10), dp(2))
             setOnClickListener {
-                android.util.Log.i("KfReadOnly", "BTN_CLICK")
                 copyToClipboard(text)
             }
         }
@@ -397,14 +392,15 @@ class HintOverlayManager(
         }
 
     /**
-     * 面板背景：半透明深色。
+     * 面板背景：半透明深色，不透明度由设置页控制（默认 78%）。
      *
-     * 0xC8 = 200/255 ≈ 78% 不透明 —— 既能看清文字，又能透出下面的微信界面，
-     * 便于对照上下文。若需要更透可调到 0xB0，更实可调到 0xE0。
+     * 100% = 完全不透明；数值越小越透，越能看清下面的微信界面。
      */
     private fun cardBackground(): GradientDrawable = GradientDrawable().apply {
         cornerRadius = dp(8f).toFloat()
-        setColor(0xC8101010.toInt())
+        val percent = settings.overlayOpacityPercent
+        val alpha = (percent * 255 / 100).coerceIn(0, 255)
+        setColor((alpha shl 24) or 0x101010)
         setStroke(dp(1), 0x40FFFFFF)
     }
 
@@ -427,7 +423,5 @@ class HintOverlayManager(
         /** no_match 自动关闭延时。 */
         const val AUTO_DISMISS_MS = 5_000L
 
-        /** 列表最多展示的条目数（超出部分用一行提示代替）。 */
-        private const val MAX_ROWS = 5
     }
 }

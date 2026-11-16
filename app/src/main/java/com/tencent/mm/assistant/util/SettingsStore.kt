@@ -92,6 +92,17 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean(KEY_PROFILE_READ, true)
         set(value) = prefs.edit().putBoolean(KEY_PROFILE_READ, value).apply()
 
+    /**
+     * 悬浮窗背景不透明度（百分比，30~100，默认 78）。
+     *
+     * 100 = 完全不透明；数值越小越透，越能看清下面的微信界面。
+     */
+    var overlayOpacityPercent: Int
+        get() = prefs.getInt(KEY_OVERLAY_OPACITY, DEFAULT_OPACITY).coerceIn(MIN_OPACITY, MAX_OPACITY)
+        set(value) = prefs.edit()
+            .putInt(KEY_OVERLAY_OPACITY, value.coerceIn(MIN_OPACITY, MAX_OPACITY))
+            .apply()
+
     // ------------------------------------------------------------ device_id
 
     /**
@@ -126,6 +137,12 @@ class SettingsStore(context: Context) {
         private const val KEY_OCR_ENABLED = "ocr_fallback_enabled"
         private const val KEY_LOCAL_LOG = "local_log_enabled"
         private const val KEY_PROFILE_READ = "profile_read_enabled"
+        private const val KEY_OVERLAY_OPACITY = "overlay_opacity_percent"
+
+        /** 悬浮窗不透明度默认值（百分比）。 */
+        const val DEFAULT_OPACITY = 78
+        const val MIN_OPACITY = 30
+        const val MAX_OPACITY = 100
 
         const val DEFAULT_MAX_MESSAGES = 5
         const val MIN_MESSAGES = 1

@@ -8,6 +8,7 @@ import android.view.Gravity
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -33,6 +34,8 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var ocrSwitch: Switch
     private lateinit var logSwitch: Switch
     private lateinit var profileSwitch: Switch
+    private lateinit var opacityLabel: TextView
+    private lateinit var opacityBar: SeekBar
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,6 +88,30 @@ class SettingsActivity : AppCompatActivity() {
         }
         root.addView(profileSwitch)
 
+        // 悬浮窗不透明度
+        opacityLabel = TextView(this).apply {
+            textSize = 13f
+            setPadding(0, dp(12), 0, dp(4))
+            text = getString(R.string.settings_opacity_fmt, settings.overlayOpacityPercent)
+        }
+        root.addView(opacityLabel)
+
+        opacityBar = SeekBar(this).apply {
+            max = SettingsStore.MAX_OPACITY - SettingsStore.MIN_OPACITY
+            progress = settings.overlayOpacityPercent - SettingsStore.MIN_OPACITY
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    val percent = progress + SettingsStore.MIN_OPACITY
+                    opacityLabel.text = getString(R.string.settings_opacity_fmt, percent)
+                }
+
+                override fun onStartTrackingTouch(bar: SeekBar?) = Unit
+
+                override fun onStopTrackingTouch(bar: SeekBar?) = Unit
+            })
+        }
+        root.addView(opacityBar)
+
         root.addView(button(getString(R.string.settings_btn_save)) {
             persistInputs()
             finish()
@@ -121,6 +148,7 @@ class SettingsActivity : AppCompatActivity() {
         settings.ocrFallbackEnabled = ocrSwitch.isChecked
         settings.localLogEnabled = logSwitch.isChecked
         settings.profileReadEnabled = profileSwitch.isChecked
+        settings.overlayOpacityPercent = opacityBar.progress + SettingsStore.MIN_OPACITY
     }
 
     private fun label(text: String): TextView =
