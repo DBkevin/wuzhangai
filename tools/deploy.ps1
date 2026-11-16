@@ -1,4 +1,4 @@
-# 一键部署脚本：下载最新 CI 产物 -> 卸载旧版 -> 安装 -> 写配置 -> 授权 -> 重启无障碍
+﻿# 一键部署脚本：下载最新 CI 产物 -> 卸载旧版 -> 安装 -> 写配置 -> 授权 -> 重启无障碍
 #
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File tools\deploy.ps1
@@ -58,10 +58,43 @@ Start-Sleep -Seconds 2
 # ---------- 3. 卸载 + 安装 ----------
 Step "reinstall"
 & $Adb -s $Serial uninstall $pkg | Out-Null
-$installOut = & $Adb -s $Serial install $apk 2>&1
-$installText = ($installOut | Out-String)
+
+# MIUI/HyperOS 会弹「USB安装提示」，10 秒倒计时不点「继续安装」就自动拒绝。
+# 这里后台发起安装，同时轮询界面把按钮点掉。
+$installJob = Start-Job -ScriptBlock {
+    param($a, $s, $p)
+    & $a -s $s install $p 2>&1
+} -ArgumentList $Adb, $Serial, $apk
+
+$tapped = $false
+for ($i = 0; $i -lt 20; $i++) {
+    Start-Sleep -Milliseconds 700
+    if ($installJob.State -eq 'Completed') { break }
+    $tmpDump = Join-Path $dir "ui.xml"
+    & $Adb -s $Serial shell uiautomator dump /sdcard/_kf_install.xml 2>$null | Out-Null
+    & $Adb -s $Serial pull /sdcard/_kf_install.xml $tmpDump 2>$null | Out-Null
+    if (-not (Test-Path $tmpDump)) { continue }
+    $xml = Get-Content $tmpDump -Raw -Encoding UTF8
+    if ($xml -notmatch '继续安装') { continue }
+    $m = [regex]::Match($xml, 'text="继续安装"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"')
+    if (-not $m.Success) {
+        $m = [regex]::Match($xml, 'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*text="继续安装"')
+    }
+    if ($m.Success) {
+        $cx = ([int]$m.Groups[1].Value + [int]$m.Groups[3].Value) / 2
+        $cy = ([int]$m.Groups[2].Value + [int]$m.Groups[4].Value) / 2
+        & $Adb -s $Serial shell input tap $cx $cy | Out-Null
+        $tapped = $true
+        Write-Host "tapped 继续安装 at ($cx,$cy)"
+        break
+    }
+}
+$installText = (Receive-Job $installJob -Wait -AutoRemoveJob 2>&1 | Out-String)
 Write-Host $installText.Trim()
-if ($installText -notmatch 'Success') { throw "install failed: $installText" }
+if ($installText -notmatch 'Success') {
+    if ($tapped) { throw "install failed after tapping confirm: $installText" }
+    throw "install failed (MIUI 可能拦了 USB 安装，请在手机上点『继续安装』): $installText"
+}
 
 # ---------- 4. 写入配置 ----------
 Step "write prefs"

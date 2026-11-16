@@ -30,17 +30,17 @@ import com.tencent.mm.assistant.util.SettingsStore
 /**
  * 悬浮窗管理。
  *
- * 边界（PRD 模块 3）：
- *  * 仅在收到中控响应且 action != none 时显示；
- *  * TYPE_APPLICATION_OVERLAY + FLAG_NOT_FOCUSABLE：绝不抢占微信输入焦点；
- *  * 固定宽度（屏宽 40%）、贴屏幕右侧垂直居中，不提供拖动，不会落入底部输入框；
- *  * 同一会话同时只存在一个悬浮窗，新响应到来时先移除旧窗口再展示；
- *  * 点击按钮只把"用户的选择"POST 到中控 /feedback，然后关闭 ——
- *    绝不触碰微信输入框，绝不发送任何微信消息。
+ * 布局（按使用反馈调整）：
+ *   * **满屏宽**，贴在屏幕**顶部 1/3** 处；
+ *   * 内容是**一条条的列表**，每条右侧一个「复制」按钮；
+ *   * 列表可上下滚动；底部一条小字说明。
  *
- * 交互增强：
- *  * 内容超出最大高度时可**滚动**（ScrollView + 高度上限）；
- *  * 提示文本 / 候选条目**点按即复制**到系统剪贴板（只复制，不注入任何应用）。
+ * 边界（PRD 模块 3）：
+ *   * 仅在收到中控响应且 action != none 时显示；
+ *   * TYPE_APPLICATION_OVERLAY + FLAG_NOT_FOCUSABLE：绝不抢占微信输入焦点；
+ *   * 只占顶部 1/3，不遮挡底部输入框；
+ *   * 同一会话同时只存在一个悬浮窗，新响应到来时替换旧窗口，不叠加；
+ *   * 复制只写系统剪贴板，不向微信注入任何输入事件，也不触发粘贴。
  */
 class HintOverlayManager(
     private val appContext: Context,
@@ -55,7 +55,6 @@ class HintOverlayManager(
     private var currentSessionKey: String? = null
     private var autoDismissRunnable: Runnable? = null
 
-    /** 中控最近一次响应的上下文，反馈按钮需要用到。 */
     private var lastResponse: CenterResponse? = null
     private var lastTitle: String? = null
 
@@ -74,7 +73,6 @@ class HintOverlayManager(
         }
         windowManager = wm
 
-        // 权限缺失：静默放弃展示（PRD 验收 2：无权限/无网络不得打扰微信）。
         if (!hasOverlayPermission()) {
             logger.event("overlay_no_permission")
             return
@@ -83,28 +81,25 @@ class HintOverlayManager(
         removeInternal()
 
         val metrics = appContext.resources.displayMetrics
-        // 固定宽度：内容再多也不改变窗口宽度，避免窗口"跳动"
-        val boxWidth = (metrics.widthPixels * MAX_WIDTH_RATIO).toInt()
-        // 内容最大高度：超出后内部滚动，窗口不会顶到屏幕外
-        val maxScrollHeight = (metrics.heightPixels * MAX_HEIGHT_RATIO).toInt()
+        val panelHeight = (metrics.heightPixels * HEIGHT_RATIO).toInt()
 
-        val view = buildView(response, boxWidth, maxScrollHeight)
+        val view = buildView(response, panelHeight)
             ?: run {
                 logger.event("overlay_build_failed")
                 return
             }
 
         val params = WindowManager.LayoutParams(
-            boxWidth,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,   // 满屏宽
+            panelHeight,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT,
         ).apply {
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
-            x = dp(RIGHT_MARGIN_DP)
-            y = 0
+            gravity = Gravity.TOP or Gravity.START
+            x = 0
+            y = statusBarHeight()
         }
 
         try {
@@ -121,7 +116,6 @@ class HintOverlayManager(
         logger.event("overlay_shown")
 
         if (response.action == CenterAction.NO_MATCH) {
-            // no_match：5 秒后自动消失。
             val r = Runnable { dismiss() }
             autoDismissRunnable = r
             mainHandler.postDelayed(r, AUTO_DISMISS_MS)
@@ -152,151 +146,169 @@ class HintOverlayManager(
 
     // ---------------------------------------------------------------- 视图构建
 
-    private fun buildView(response: CenterResponse, boxWidth: Int, maxScrollHeight: Int): View? {
+    private fun buildView(response: CenterResponse, panelHeight: Int): View? {
         val root = LinearLayout(appContext).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(10))
+            setPadding(dp(12), dp(8), dp(12), dp(8))
             background = cardBackground()
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                panelHeight,
+            )
         }
-        // 内容区可用宽度（扣除左右内边距），测量换行时必须用这个宽度
-        val contentWidth = (boxWidth - dp(14) * 2).coerceAtLeast(dp(60))
 
+        // 顶部标题栏：标题 + 关闭
+        val header = LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(
+            titleView(titleFor(response)),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        header.addView(smallButton(appContext.getString(R.string.overlay_btn_close)) { dismiss() })
+        root.addView(header)
+
+        // 中间：可滚动的条目列表
+        val list = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
         when (response.action) {
             CenterAction.SHOW_HINT -> {
+                // 提示按行拆成"一条条"，每条右侧一个复制按钮
                 val hint = response.hint ?: appContext.getString(R.string.overlay_empty_hint)
-                root.addView(titleView(appContext.getString(R.string.overlay_title_hint)))
-
-                // 注意：正文**不设 clickable** —— 可点击的 TextView 会吃掉滑动手势，
-                // 导致内容无法滚动。复制改用下方明确的「复制」按钮。
-                val body = bodyView(hint)
-                root.addView(wrapScroll(body, contentWidth, maxScrollHeight))
-                root.addView(tapHintView())
-                root.addView(
-                    buttonRow(
-                        button(appContext.getString(R.string.overlay_btn_copy)) { copyToClipboard(hint) },
-                        button(appContext.getString(R.string.overlay_btn_got_it)) { dismiss() },
-                    ),
-                )
+                val items = hint.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+                if (items.isEmpty()) {
+                    list.addView(rowView(hint))
+                } else {
+                    items.forEach { list.addView(rowView(it)) }
+                }
             }
 
             CenterAction.SHOW_CANDIDATES -> {
-                root.addView(titleView(appContext.getString(R.string.overlay_title_candidates)))
-
-                val column = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
                 if (response.candidates.isEmpty()) {
-                    column.addView(bodyView(appContext.getString(R.string.overlay_empty_candidates)))
+                    list.addView(rowView(appContext.getString(R.string.overlay_empty_candidates)))
                 } else {
                     response.candidates.forEachIndexed { index, candidate ->
-                        column.addView(candidateCard(candidate, index, response))
+                        list.addView(candidateRow(candidate, index, response))
                     }
                 }
-                root.addView(wrapScroll(column, contentWidth, maxScrollHeight))
-                root.addView(tapHintView())
-                root.addView(button(appContext.getString(R.string.overlay_btn_close)) { dismiss() })
             }
 
             CenterAction.NO_MATCH -> {
-                root.addView(titleView(appContext.getString(R.string.overlay_title_no_match)))
-                root.addView(
-                    wrapScroll(
-                        bodyView(appContext.getString(R.string.overlay_no_match_body)),
-                        contentWidth,
-                        maxScrollHeight,
-                    ),
-                )
-                root.addView(button(appContext.getString(R.string.overlay_btn_close)) { dismiss() })
+                list.addView(rowView(appContext.getString(R.string.overlay_no_match_body)))
             }
 
             CenterAction.NONE -> return null
         }
-        return root
-    }
 
-    /**
-     * 把内容包进可滚动容器，并限制最大高度。
-     *
-     * 关键：测量时必须给定**确定的宽度**（contentWidth），否则文本不会按实际宽度换行，
-     * 测出的高度会远小于真实高度，导致内容被裁掉且无法滚动。
-     *
-     * 高度取「内容自然高度」与「上限」的较小值：
-     *  * 内容不多 -> 窗口自适应，不出现多余空白
-     *  * 内容很多 -> 固定在上限高度，内部可上下滚动
-     */
-    private fun wrapScroll(child: View, contentWidth: Int, maxHeight: Int): ScrollView {
         val scroll = ScrollView(appContext).apply {
             isFillViewport = false
             isVerticalScrollBarEnabled = true
             addView(
-                child,
+                list,
                 ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
             )
         }
-        child.measure(
-            View.MeasureSpec.makeMeasureSpec(contentWidth, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        root.addView(
+            scroll,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
         )
-        val natural = child.measuredHeight
-        val height = if (natural in 1 until maxHeight) natural else maxHeight
-        scroll.layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            height,
-        )
-        return scroll
+
+        // 底部说明
+        root.addView(footerView())
+        return root
     }
 
-    private fun candidateCard(candidate: Candidate, index: Int, response: CenterResponse): View {
-        val card = LinearLayout(appContext).apply {
+    private fun titleFor(response: CenterResponse): String = when (response.action) {
+        CenterAction.SHOW_HINT -> appContext.getString(R.string.overlay_title_hint)
+        CenterAction.SHOW_CANDIDATES -> appContext.getString(R.string.overlay_title_candidates)
+        CenterAction.NO_MATCH -> appContext.getString(R.string.overlay_title_no_match)
+        CenterAction.NONE -> ""
+    }
+
+    /** 一条文本 + 右侧「复制」按钮。 */
+    private fun rowView(text: String): View {
+        val row = LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        val content = TextView(appContext).apply {
+            this.text = text
+            setTextColor(0xFFE8E8E8.toInt())
+            textSize = 13f
+            setPadding(0, 0, dp(8), 0)
+        }
+        row.addView(
+            content,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        row.addView(copyButton(text))
+        return row
+    }
+
+    /** 候选：文本（label + 置信度 + evidence）+ 右侧复制 + 下方两个决策按钮。 */
+    private fun candidateRow(candidate: Candidate, index: Int, response: CenterResponse): View {
+        val wrap = LinearLayout(appContext).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            background = candidateBackground()
-            // 点按卡片即复制该条候选
-            isClickable = true
-            setOnClickListener {
-                copyToClipboard(
-                    buildString {
-                        append(candidate.label)
-                        append('\n')
-                        append(appContext.getString(R.string.overlay_candidate_meta_fmt, (candidate.confidence * 100).toInt(), candidate.evidence))
-                    },
-                )
-            }
+            setPadding(0, dp(4), 0, dp(6))
         }
 
-        card.addView(
-            bodyView(appContext.getString(R.string.overlay_candidate_label_fmt, candidate.label))
-                .apply { setTypeface(typeface, Typeface.BOLD) },
+        val meta = appContext.getString(
+            R.string.overlay_candidate_meta_fmt,
+            (candidate.confidence * 100).toInt(),
+            candidate.evidence,
         )
-        card.addView(
-            bodyView(
-                appContext.getString(
-                    R.string.overlay_candidate_meta_fmt,
-                    (candidate.confidence * 100).toInt(),
-                    candidate.evidence,
-                ),
-            ),
-        )
+        val fullText = candidate.label + "\n" + meta
 
-        val row = LinearLayout(appContext).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(
-            button(appContext.getString(R.string.overlay_btn_confirm)) {
+        val top = LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val content = TextView(appContext).apply {
+            text = fullText
+            setTextColor(0xFFE8E8E8.toInt())
+            textSize = 13f
+            setPadding(0, 0, dp(8), 0)
+        }
+        top.addView(content, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        top.addView(copyButton(fullText))
+        wrap.addView(top)
+
+        val actions = LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(2), 0, 0)
+        }
+        actions.addView(
+            smallButton(appContext.getString(R.string.overlay_btn_confirm)) {
                 sendFeedback(response, index, candidate, accepted = true)
                 dismiss()
             },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
-        row.addView(
-            button(appContext.getString(R.string.overlay_btn_reject)) {
+        actions.addView(
+            smallButton(appContext.getString(R.string.overlay_btn_reject)) {
                 sendFeedback(response, index, candidate, accepted = false)
                 dismiss()
             },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
-        card.addView(row)
-        return card
+        wrap.addView(actions)
+        return wrap
     }
+
+    private fun copyButton(text: String): Button =
+        Button(appContext).apply {
+            this.text = appContext.getString(R.string.overlay_btn_copy)
+            textSize = 12f
+            isAllCaps = false
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(10), dp(2), dp(10), dp(2))
+            setOnClickListener { copyToClipboard(text) }
+        }
 
     private fun sendFeedback(
         response: CenterResponse,
@@ -324,7 +336,7 @@ class HintOverlayManager(
      * 复制到系统剪贴板。
      *
      * 只写剪贴板，不向任何应用注入输入事件，也不触发粘贴。
-     * 用户需要自己长按输入框粘贴 —— 这一步永远由人工完成。
+     * 粘贴永远由人工完成。
      */
     private fun copyToClipboard(text: String) {
         try {
@@ -349,51 +361,36 @@ class HintOverlayManager(
             setTextColor(Color.WHITE)
             textSize = 15f
             setTypeface(typeface, Typeface.BOLD)
-            setPadding(0, dp(2), 0, dp(6))
+            setPadding(0, dp(2), 0, dp(4))
         }
 
-    private fun bodyView(text: String): TextView =
+    private fun footerView(): TextView =
         TextView(appContext).apply {
-            this.text = text
-            setTextColor(0xFFDDDDDD.toInt())
-            textSize = 13f
-            // 注意：不要设 ellipsize —— 否则在滚动容器里仍会被截断成"…"
-            setPadding(0, dp(1), 0, dp(4))
-        }
-
-    /** 小字提示：告诉用户可以点按复制。 */
-    private fun tapHintView(): TextView =
-        TextView(appContext).apply {
-            text = appContext.getString(R.string.overlay_tap_to_copy)
+            text = appContext.getString(R.string.overlay_list_hint)
             setTextColor(0xFF888888.toInt())
             textSize = 10f
-            setPadding(0, 0, 0, dp(4))
+            setPadding(0, dp(2), 0, 0)
         }
 
-    private fun button(text: String, onClick: () -> Unit): Button =
+    private fun smallButton(text: String, onClick: () -> Unit): Button =
         Button(appContext).apply {
             this.text = text
-            textSize = 13f
+            textSize = 12f
             isAllCaps = false
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(10), dp(2), dp(10), dp(2))
             setOnClickListener { onClick() }
         }
 
-    /** 一行等宽排列两个按钮。 */
-    private fun buttonRow(left: View, right: View): LinearLayout =
-        LinearLayout(appContext).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(right, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        }
-
     private fun cardBackground(): GradientDrawable = GradientDrawable().apply {
-        cornerRadius = dp(10f).toFloat()
-        setColor(0xE6101010.toInt())
+        cornerRadius = dp(8f).toFloat()
+        setColor(0xF2101010.toInt())
     }
 
-    private fun candidateBackground(): GradientDrawable = GradientDrawable().apply {
-        cornerRadius = dp(8f).toFloat()
-        setColor(0x22FFFFFF)
+    private fun statusBarHeight(): Int {
+        val resId = appContext.resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (resId > 0) appContext.resources.getDimensionPixelSize(resId) else dp(24)
     }
 
     private fun dp(value: Int): Int = (value * appContext.resources.displayMetrics.density).toInt()
@@ -404,14 +401,8 @@ class HintOverlayManager(
         android.provider.Settings.canDrawOverlays(appContext)
 
     companion object {
-        /** 悬浮窗固定宽度：屏宽 40%（PRD 模块 3.3 上限）。 */
-        const val MAX_WIDTH_RATIO = 0.40f
-
-        /** 内容区最大高度：屏高 55%，超出后内部滚动。 */
-        const val MAX_HEIGHT_RATIO = 0.55f
-
-        /** 距屏幕右缘的边距（dp）。固定右侧居中，不提供拖动，杜绝落入底部输入框区域。 */
-        const val RIGHT_MARGIN_DP = 8
+        /** 面板高度：屏高 1/3（贴顶部）。 */
+        const val HEIGHT_RATIO = 1f / 3f
 
         /** no_match 自动关闭延时。 */
         const val AUTO_DISMISS_MS = 5_000L

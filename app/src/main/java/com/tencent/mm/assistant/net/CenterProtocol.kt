@@ -87,14 +87,25 @@ data class CenterResponse(
     val requestId: String?,
 ) {
     companion object {
-        /** 越界防御：候选最多 3 条，文本截断，避免悬浮窗被超长内容撑爆。 */
+        /** 越界防御：候选最多 3 条，避免悬浮窗被超长内容撑爆。 */
         const val MAX_CANDIDATES = 3
+
+        /** 候选 label/evidence 的显示上限（短文本，够用即可）。 */
         private const val MAX_TEXT = 160
+
+        /**
+         * 提示正文上限。
+         *
+         * 不能沿用 160：中控可能返回多行说明（历史订单、注意事项等），
+         * 截断到 160 会让用户看不到关键信息。这里放宽到 2000，
+         * 超出部分由悬浮窗内部滚动承载。
+         */
+        private const val MAX_HINT = 2000
 
         fun parse(json: String): CenterResponse? = try {
             val root = JSONObject(json)
             val action = CenterAction.fromWire(root.optString("action", null))
-            val hint = root.optStringOrNull("hint")?.take(MAX_TEXT)
+            val hint = root.optStringOrNull("hint")?.take(MAX_HINT)
             val candidates = ArrayList<Candidate>(MAX_CANDIDATES)
             val arr = root.optJSONArray("candidates")
             if (arr != null) {

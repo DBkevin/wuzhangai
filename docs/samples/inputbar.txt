@@ -1,0 +1,9 @@
+class=ImageButton text='' cd='切换到按住说话'
+  codepoints_text=[]
+  bounds=[7,2964][166,3123]
+class=ImageButton text='' cd='表情'
+  codepoints_text=[]
+  bounds=[1130,2964][1289,3123]
+class=ImageButton text='' cd='更多功能按钮，已折叠'
+  codepoints_text=[]
+  bounds=[1274,2964][1433,3123]
