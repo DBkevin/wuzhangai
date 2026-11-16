@@ -1,7 +1,6 @@
 name: root probe
 
 # 只构建 tools/rootprobe 这个独立小工程，与主 App 完全无关。
-# 触发：修改 rootprobe 相关文件，或手动 Run workflow。
 on:
   push:
     paths:
@@ -29,12 +28,31 @@ jobs:
           gradle-version: '8.7'
 
       - name: Build probe APK
+        id: build
+        continue-on-error: true
         working-directory: tools/rootprobe
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+          echo "gradle_exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-build-log
+          path: tools/rootprobe/build.log
+          retention-days: 7
 
       - name: Upload APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rootprobe-apk
           path: tools/rootprobe/app/build/outputs/apk/debug/*.apk
           retention-days: 30
+          if-no-files-found: warn
+
+      - name: Fail if gradle failed
+        if: steps.build.outcome == 'failure'
+        run: exit 1
