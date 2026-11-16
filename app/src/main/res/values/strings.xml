@@ -51,7 +51,8 @@
     <string name="overlay_btn_confirm">确认关联</string>
     <string name="overlay_btn_reject">不是同一人</string>
     <string name="overlay_btn_close">关闭</string>
-    <string name="overlay_tap_to_copy">点按内容可复制</string>
+    <string name="overlay_btn_copy">复制</string>
+    <string name="overlay_tap_to_copy">点按候选条目可复制</string>
     <string name="overlay_copied">已复制</string>
     <string name="overlay_title_no_match">未找到记录</string>
     <string name="overlay_no_match_body">未找到该顾客的历史记录</string>

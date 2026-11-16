@@ -166,14 +166,17 @@ class HintOverlayManager(
                 val hint = response.hint ?: appContext.getString(R.string.overlay_empty_hint)
                 root.addView(titleView(appContext.getString(R.string.overlay_title_hint)))
 
-                val body = bodyView(hint).apply {
-                    // 点按整段提示即复制
-                    isClickable = true
-                    setOnClickListener { copyToClipboard(hint) }
-                }
+                // 注意：正文**不设 clickable** —— 可点击的 TextView 会吃掉滑动手势，
+                // 导致内容无法滚动。复制改用下方明确的「复制」按钮。
+                val body = bodyView(hint)
                 root.addView(wrapScroll(body, contentWidth, maxScrollHeight))
                 root.addView(tapHintView())
-                root.addView(button(appContext.getString(R.string.overlay_btn_got_it)) { dismiss() })
+                root.addView(
+                    buttonRow(
+                        button(appContext.getString(R.string.overlay_btn_copy)) { copyToClipboard(hint) },
+                        button(appContext.getString(R.string.overlay_btn_got_it)) { dismiss() },
+                    ),
+                )
             }
 
             CenterAction.SHOW_CANDIDATES -> {
@@ -373,6 +376,14 @@ class HintOverlayManager(
             textSize = 13f
             isAllCaps = false
             setOnClickListener { onClick() }
+        }
+
+    /** 一行等宽排列两个按钮。 */
+    private fun buttonRow(left: View, right: View): LinearLayout =
+        LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(right, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
 
     private fun cardBackground(): GradientDrawable = GradientDrawable().apply {
