@@ -1,0 +1,40 @@
+name: root probe
+
+# 只构建 tools/rootprobe 这个独立小工程，与主 App 完全无关。
+# 触发：修改 rootprobe 相关文件，或手动 Run workflow。
+on:
+  push:
+    paths:
+      - 'tools/rootprobe/**'
+      - '.github/workflows/probe.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.7'
+
+      - name: Build probe APK
+        working-directory: tools/rootprobe
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: rootprobe-apk
+          path: tools/rootprobe/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
