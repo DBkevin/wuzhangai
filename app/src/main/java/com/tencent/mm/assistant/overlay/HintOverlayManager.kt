@@ -228,12 +228,17 @@ class HintOverlayManager(
         CenterAction.NONE -> ""
     }
 
-    /** 一条文本 + 右侧「复制」按钮。 */
+    /** 一条文本 + 右侧「复制」按钮。整行也可点击复制（双通道，兼容不同 ROM 的触摸行为）。 */
     private fun rowView(text: String): View {
         val row = LinearLayout(appContext).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(4), 0, dp(4))
+            isClickable = true
+            setOnClickListener {
+                android.util.Log.i("KfReadOnly", "ROW_CLICK")
+                copyToClipboard(text)
+            }
         }
         val content = TextView(appContext).apply {
             this.text = text
@@ -307,7 +312,10 @@ class HintOverlayManager(
             minWidth = 0
             minimumWidth = 0
             setPadding(dp(10), dp(2), dp(10), dp(2))
-            setOnClickListener { copyToClipboard(text) }
+            setOnClickListener {
+                android.util.Log.i("KfReadOnly", "BTN_CLICK")
+                copyToClipboard(text)
+            }
         }
 
     private fun sendFeedback(
