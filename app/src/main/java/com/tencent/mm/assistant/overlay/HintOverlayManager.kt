@@ -15,7 +15,6 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.tencent.mm.assistant.R
@@ -169,17 +168,25 @@ class HintOverlayManager(
         header.addView(smallButton(appContext.getString(R.string.overlay_btn_close)) { dismiss() })
         root.addView(header)
 
-        // 中间：可滚动的条目列表
-        val list = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
+        // 中间：条目列表。
+        //
+        // 注意：这里刻意**不用 ScrollView**。
+        // 实测在 TYPE_APPLICATION_OVERLAY 窗口里，ScrollView 会吞掉子控件的点击事件
+        // （头部按钮在 ScrollView 外，点击正常；列表内的按钮完全收不到点击）。
+        // 因此改为固定高度列表 + 限制条目数，保证每条右侧的「复制」按钮可靠可点。
+        val list = LinearLayout(appContext).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = true
+        }
         when (response.action) {
             CenterAction.SHOW_HINT -> {
                 // 提示按行拆成"一条条"，每条右侧一个复制按钮
                 val hint = response.hint ?: appContext.getString(R.string.overlay_empty_hint)
                 val items = hint.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
-                if (items.isEmpty()) {
-                    list.addView(rowView(hint))
-                } else {
-                    items.forEach { list.addView(rowView(it)) }
+                val shown = if (items.isEmpty()) listOf(hint) else items.take(MAX_ROWS)
+                shown.forEach { list.addView(rowView(it)) }
+                if (items.size > MAX_ROWS) {
+                    list.addView(moreView(items.size - MAX_ROWS))
                 }
             }
 
@@ -187,7 +194,7 @@ class HintOverlayManager(
                 if (response.candidates.isEmpty()) {
                     list.addView(rowView(appContext.getString(R.string.overlay_empty_candidates)))
                 } else {
-                    response.candidates.forEachIndexed { index, candidate ->
+                    response.candidates.take(MAX_CANDIDATES).forEachIndexed { index, candidate ->
                         list.addView(candidateRow(candidate, index, response))
                     }
                 }
@@ -200,19 +207,8 @@ class HintOverlayManager(
             CenterAction.NONE -> return null
         }
 
-        val scroll = ScrollView(appContext).apply {
-            isFillViewport = false
-            isVerticalScrollBarEnabled = true
-            addView(
-                list,
-                ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ),
-            )
-        }
         root.addView(
-            scroll,
+            list,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
         )
 
@@ -220,6 +216,15 @@ class HintOverlayManager(
         root.addView(footerView())
         return root
     }
+
+    /** 条目过多时的提示行（不参与复制）。 */
+    private fun moreView(remaining: Int): View =
+        TextView(appContext).apply {
+            text = appContext.getString(R.string.overlay_more_rows_fmt, remaining)
+            setTextColor(0xFFAAAAAA.toInt())
+            textSize = 11f
+            setPadding(0, dp(2), 0, dp(2))
+        }
 
     private fun titleFor(response: CenterResponse): String = when (response.action) {
         CenterAction.SHOW_HINT -> appContext.getString(R.string.overlay_title_hint)
@@ -414,5 +419,8 @@ class HintOverlayManager(
 
         /** no_match 自动关闭延时。 */
         const val AUTO_DISMISS_MS = 5_000L
+
+        /** 列表最多展示的条目数（超出部分用一行提示代替）。 */
+        private const val MAX_ROWS = 5
     }
 }
