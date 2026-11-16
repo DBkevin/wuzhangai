@@ -139,8 +139,8 @@ class SettingsStore(context: Context) {
         private const val KEY_PROFILE_READ = "profile_read_enabled"
         private const val KEY_OVERLAY_OPACITY = "overlay_opacity_percent"
 
-        /** 悬浮窗不透明度默认值（百分比）。 */
-        const val DEFAULT_OPACITY = 78
+        /** 悬浮窗不透明度默认值（百分比）。65% 兼顾可读性与"能看清背后微信"的需求。 */
+        const val DEFAULT_OPACITY = 65
         const val MIN_OPACITY = 30
         const val MAX_OPACITY = 100
 

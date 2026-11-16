@@ -220,6 +220,32 @@ y=1516  x=1324  content-desc='旺仔小李头像'      ← 自己（屏幕右半
 
 ---
 
+## 坑 8：ADB 注入的点击对悬浮窗无效（不是 bug）
+
+**现象**：用 `adb shell input tap` 点浮窗里的按钮，完全没反应，连日志都不打；
+但真人手指点击正常。
+
+**判定**：窗口属性显示可触摸，却收不到事件：
+
+```powershell
+& $adb shell dumpsys window windows | Select-String "APPLICATION_OVERLAY" -Context 3,3
+# fl=NOT_FOCUSABLE NOT_TOUCH_MODAL HARDWARE_ACCELERATED   ← 没有 NOT_TOUCHABLE
+```
+
+**根因**：MIUI/HyperOS 的安全策略会拦截**注入式**触摸对 overlay 窗口的投递（防点击劫持）。
+真实触摸不受影响。
+
+**应对**：
+
+* 调试浮窗交互时**不要**用 `input tap` 判断"按钮坏了"，必须真人点；
+* 若确实要自动化，改用 `input motionevent` 或让测试脚本走 UI Automator（同样可能被拦）；
+* 记录结论：**浮窗交互只能人工验证**。
+
+> 这条曾导致误判：一度以为 `ScrollView` 吞掉了子控件点击，把滚动功能删掉重做。
+> 后来真人测试发现点击一直是好的，ScrollView 已恢复。
+
+---
+
 ## 附：装包失败的两个坑
 
 ### A. `INSTALL_FAILED_UPDATE_INCOMPATIBLE`
