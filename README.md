@@ -13,8 +13,9 @@
 | 文档 | 内容 |
 | --- | --- |
 | 本 README | 安装、配置、权限、验证只读 |
+| [docs/INTEGRATION.md](docs/INTEGRATION.md) | ⭐ **中控对接文档**：全部接口、字段、时序、频率、失败处理、联调清单 |
 | [docs/UI-FIELDS.md](docs/UI-FIELDS.md) | **界面字段全清单**：聊天页/资料页每个节点有哪些字段、能读到什么、读不到什么 |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | **故障排查手册**：7 个已踩过的坑 + 快速自检 + 日志速查表 |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | **故障排查手册**：8 个已踩过的坑 + 快速自检 + 日志速查表 |
 | [docs/IDENTITY-LINKING.md](docs/IDENTITY-LINKING.md) | **身份关联设计**：聊天页 ↔ 资料页如何认定为同一人 |
 
 > 遇到"没反应"，先看 TROUBLESHOOTING 的「三分钟快速自检」，90% 的问题在那 6 条命令里。
