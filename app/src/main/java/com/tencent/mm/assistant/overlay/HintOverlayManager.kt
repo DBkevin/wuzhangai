@@ -9,7 +9,6 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
-import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -89,7 +88,7 @@ class HintOverlayManager(
         // 内容最大高度：超出后内部滚动，窗口不会顶到屏幕外
         val maxScrollHeight = (metrics.heightPixels * MAX_HEIGHT_RATIO).toInt()
 
-        val view = buildView(response, maxScrollHeight)
+        val view = buildView(response, boxWidth, maxScrollHeight)
             ?: run {
                 logger.event("overlay_build_failed")
                 return
@@ -153,12 +152,14 @@ class HintOverlayManager(
 
     // ---------------------------------------------------------------- 视图构建
 
-    private fun buildView(response: CenterResponse, maxScrollHeight: Int): View? {
+    private fun buildView(response: CenterResponse, boxWidth: Int, maxScrollHeight: Int): View? {
         val root = LinearLayout(appContext).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(10), dp(14), dp(10))
             background = cardBackground()
         }
+        // 内容区可用宽度（扣除左右内边距），测量换行时必须用这个宽度
+        val contentWidth = (boxWidth - dp(14) * 2).coerceAtLeast(dp(60))
 
         when (response.action) {
             CenterAction.SHOW_HINT -> {
@@ -170,7 +171,7 @@ class HintOverlayManager(
                     isClickable = true
                     setOnClickListener { copyToClipboard(hint) }
                 }
-                root.addView(wrapScroll(body, maxScrollHeight))
+                root.addView(wrapScroll(body, contentWidth, maxScrollHeight))
                 root.addView(tapHintView())
                 root.addView(button(appContext.getString(R.string.overlay_btn_got_it)) { dismiss() })
             }
@@ -186,7 +187,7 @@ class HintOverlayManager(
                         column.addView(candidateCard(candidate, index, response))
                     }
                 }
-                root.addView(wrapScroll(column, maxScrollHeight))
+                root.addView(wrapScroll(column, contentWidth, maxScrollHeight))
                 root.addView(tapHintView())
                 root.addView(button(appContext.getString(R.string.overlay_btn_close)) { dismiss() })
             }
@@ -196,6 +197,7 @@ class HintOverlayManager(
                 root.addView(
                     wrapScroll(
                         bodyView(appContext.getString(R.string.overlay_no_match_body)),
+                        contentWidth,
                         maxScrollHeight,
                     ),
                 )
@@ -210,11 +212,14 @@ class HintOverlayManager(
     /**
      * 把内容包进可滚动容器，并限制最大高度。
      *
+     * 关键：测量时必须给定**确定的宽度**（contentWidth），否则文本不会按实际宽度换行，
+     * 测出的高度会远小于真实高度，导致内容被裁掉且无法滚动。
+     *
      * 高度取「内容自然高度」与「上限」的较小值：
      *  * 内容不多 -> 窗口自适应，不出现多余空白
      *  * 内容很多 -> 固定在上限高度，内部可上下滚动
      */
-    private fun wrapScroll(child: View, maxHeight: Int): ScrollView {
+    private fun wrapScroll(child: View, contentWidth: Int, maxHeight: Int): ScrollView {
         val scroll = ScrollView(appContext).apply {
             isFillViewport = false
             isVerticalScrollBarEnabled = true
@@ -227,7 +232,7 @@ class HintOverlayManager(
             )
         }
         child.measure(
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            View.MeasureSpec.makeMeasureSpec(contentWidth, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
         )
         val natural = child.measuredHeight
@@ -349,7 +354,7 @@ class HintOverlayManager(
             this.text = text
             setTextColor(0xFFDDDDDD.toInt())
             textSize = 13f
-            ellipsize = TextUtils.TruncateAt.END
+            // 注意：不要设 ellipsize —— 否则在滚动容器里仍会被截断成"…"
             setPadding(0, dp(1), 0, dp(4))
         }
 

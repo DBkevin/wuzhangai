@@ -46,6 +46,23 @@ def decide(payload):
 
     if not title:
         return {"action": "no_match", "hint": "", "candidates": [], "request_id": rid}
+
+    # 长文本测试：用于验证浮窗的滚动与点按复制
+    if "王强" in title:
+        long_hint = (
+            "【长文本测试】该顾客在客服A下已存在，备注：王强-8321-川田来中心-26121466889。\n"
+            "历史订单：2026-03-12 初诊（脱毛），2026-05-08 复诊（水光），2026-07-19 复诊（光子嫩肤）。\n"
+            "关联客服：客服A（2026-03-12 起）、客服B（2026-06-01 至 2026-08-30）。\n"
+            "注意：该顾客曾反馈对麻药过敏，术前需再次确认；上次到店未完成第 3 次疗程。\n"
+            "建议动作：先核对手机号尾号 6889，确认后在中控后台把任务改派给客服A。\n"
+            "—— 以上为滚动测试文本，请尝试上下滑动查看，并点按任意位置复制。"
+        )
+        return {
+            "action": "show_hint",
+            "hint": long_hint,
+            "candidates": [],
+            "request_id": rid,
+        }
     if "A" in title:
         return {
             "action": "show_candidates",
