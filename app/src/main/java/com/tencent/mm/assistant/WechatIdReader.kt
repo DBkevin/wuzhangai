@@ -97,8 +97,10 @@ object WechatIdReader {
             if (found != null) return@walk
             val desc = node.contentDescription?.toString()?.trim().orEmpty()
             if (!desc.endsWith("头像") || desc.length <= 2) return@walk
+            // 注意：Android 的 getBoundsInScreen(Rect) 返回 void（不是 Boolean），
+            // 结果通过入参回填，因此这里只调用、再用 bounds 判断。
             val bounds = android.graphics.Rect()
-            if (!node.getBoundsInScreen(bounds)) return@walk
+            node.getBoundsInScreen(bounds)
             if (bounds.centerX() < half) return@walk
             val name = desc.removeSuffix("头像").trim()
             if (name.isNotEmpty()) found = name
