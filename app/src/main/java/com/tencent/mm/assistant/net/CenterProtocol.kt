@@ -35,6 +35,16 @@ data class ReadReport(
      * 中控可用它作为"这个人"的唯一键，跨客服、跨会话匹配。
      */
     val identityKey: String? = null,
+    /**
+     * 当前登录工作微信号（可空）。与 service_account_id 同源，
+     * 单独下发 `wechat_id` 以兼容 Customer Hub 中控的字段命名（docs/04 §2.3）。
+     */
+    val wechatId: String? = null,
+    /**
+     * 本人（员工）微信昵称，仅从右半屏本人气泡头像读取（docs/04 §2.2）。
+     * 供中控在双开（主号 + 旧号）场景区分「这台手机现在登的是谁」。
+     */
+    val selfNickname: String? = null,
 ) {
     fun toJson(): String {
         val root = JSONObject()
@@ -51,6 +61,8 @@ data class ReadReport(
         root.put("linked_title", linkedTitle ?: JSONObject.NULL)
         root.put("profile_nickname", profileNickname ?: JSONObject.NULL)
         root.put("identity_key", identityKey ?: JSONObject.NULL)
+        root.put("wechat_id", wechatId ?: serviceAccountId)
+        root.put("self_nickname", selfNickname ?: JSONObject.NULL)
         return root.toString()
     }
 

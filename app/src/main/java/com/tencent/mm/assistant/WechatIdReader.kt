@@ -11,14 +11,14 @@ import android.view.accessibility.AccessibilityNodeInfo
  *  * 找不到就返回 null，调用方回退到设置页里手工填写的客服账号别名。
  *
  * 微信微信号的两种形态：
- *  1. 用户自定义 ID：6~20 位，字母开头，可含字母/数字/下划线/减号
+ *  1. 用户自定义 ID：6~20 位，字母或下划线开头（如 `__LINXIAO`），可含字母/数字/下划线/减号
  *  2. 系统默认 ID：wxid_xxxxxx
  * 「我」页上微信号通常紧邻"微信号"标签，或直接展示为一行文本。
  */
 object WechatIdReader {
 
     private val WXID_REGEX = Regex("""^wxid_[A-Za-z0-9_-]{3,}$""")
-    private val CUSTOM_ID_REGEX = Regex("""^[A-Za-z][A-Za-z0-9_-]{5,19}$""")
+    private val CUSTOM_ID_REGEX = Regex("""^[A-Za-z_][A-Za-z0-9_-]{5,19}$""")
 
     /** 明确排除的文案（微信「我」页固有条目，长得像 ID 但不是）。 */
     private val EXCLUDED = setOf(
@@ -64,7 +64,7 @@ object WechatIdReader {
         return standaloneIds.firstOrNull()
     }
 
-    private fun looksLikeWechatId(value: String): Boolean {
+    internal fun looksLikeWechatId(value: String): Boolean {
         if (value.isEmpty() || value.length > 32) return false
         if (EXCLUDED.contains(value)) return false
         return WXID_REGEX.matches(value) || CUSTOM_ID_REGEX.matches(value)
@@ -83,4 +83,26 @@ object WechatIdReader {
 
     private const val MAX_DEPTH = 25
     private const val MAX_CHILDREN_PER_NODE = 30
+    /**
+     * 从当前单聊页面读取「本人（员工）昵称」。
+     *
+     * 只读判据（docs/04 §2.2）：右半屏（`centerX >= width/2`）气泡的头像节点，
+     * 其 contentDescription 形如 `"<昵称>头像"`；取不到返回 null，绝不做任何点击/输入。
+     */
+    fun findSelfNickname(root: AccessibilityNodeInfo, screenWidth: Int): String? {
+        if (screenWidth <= 0) return null
+        val half = screenWidth / 2
+        var found: String? = null
+        walk(root, 0) { node ->
+            if (found != null) return@walk
+            val desc = node.contentDescription?.toString()?.trim().orEmpty()
+            if (!desc.endsWith("头像") || desc.length <= 2) return@walk
+            val bounds = android.graphics.Rect()
+            if (!node.getBoundsInScreen(bounds)) return@walk
+            if (bounds.centerX() < half) return@walk
+            val name = desc.removeSuffix("头像").trim()
+            if (name.isNotEmpty()) found = name
+        }
+        return found
+    }
 }

@@ -50,6 +50,10 @@ open class WeChatReadService : AccessibilityService() {
 
     /** 上一次成功读取到的微信号，避免重复扫描「我」页。 */
     private var wechatIdScanDone = false
+    /** 最近一次读到的本人（员工）昵称，供上报携带 self_nickname（docs/04 §2.2）。 */
+    private var lastSelfNickname: String? = null
+    /** 微信号重扫节流：避免每次轮询都遍历节点树。 */
+    private var lastWechatIdScanAt = 0L
 
     /** 诊断：已输出的事件日志条数（限流，避免刷爆 logcat）。 */
     private var eventLogCount = 0
@@ -147,6 +151,11 @@ open class WeChatReadService : AccessibilityService() {
 
         lastRoot = root
 
+        // 双开防串号（docs/04 §2.2）：每轮轮询都允许重新读取工作号与本人昵称，
+        // 不再「扫到一次就永久锁死」，切换账号后能及时刷新。
+        maybeCaptureWechatId(root)
+        captureSelfNickname(root)
+
         // 资料页优先：人工点头像进入资料页时，读微信号并上报（不点击、不跳转）。
         if (application.settings.profileReadEnabled) {
             val profile = try {
@@ -230,6 +239,8 @@ open class WeChatReadService : AccessibilityService() {
             linkedTitle = linkedTitle,
             profileNickname = nickname,
             identityKey = wechatId ?: linkedTitle ?: nickname,
+            wechatId = application.settings.cachedWechatId.ifBlank { wechatId },
+            selfNickname = lastSelfNickname,
         )
 
         application.logger.readEvent(
@@ -451,6 +462,8 @@ open class WeChatReadService : AccessibilityService() {
             pageType = ReadReport.PAGE_CHAT,
             contactWechatId = knownWechatId,
             identityKey = knownWechatId ?: title,
+            wechatId = application.settings.cachedWechatId.ifBlank { null },
+            selfNickname = lastSelfNickname,
         )
 
         application.centerClient.report(report) { response ->
@@ -476,19 +489,41 @@ open class WeChatReadService : AccessibilityService() {
      */
     private fun maybeCaptureWechatId(root: AccessibilityNodeInfo) {
         val application = app ?: return
-        if (wechatIdScanDone || application.settings.cachedWechatId.isNotBlank()) {
-            wechatIdScanDone = true
-            return
-        }
+        val now = System.currentTimeMillis()
+        if (now - lastWechatIdScanAt < WECHAT_ID_RESCAN_MS) return
+        lastWechatIdScanAt = now
         val found = try {
             WechatIdReader.find(root)
         } catch (_: Throwable) {
             null
         }
-        if (!found.isNullOrBlank()) {
+        if (found.isNullOrBlank()) return
+        if (found != application.settings.cachedWechatId) {
             application.settings.cachedWechatId = found
-            wechatIdScanDone = true
-            application.logger.event("wechat_id_cached")
+            application.logger.event("wechat_id_refreshed")
+        }
+        wechatIdScanDone = true
+    }
+
+    /**
+     * 读取本人（员工）昵称：仅取右半屏本人气泡头像的 contentDescription（`"<昵称>头像"`）。
+     * 读不到就保留上一次的值，绝不清空、绝不点击。
+     */
+    private fun captureSelfNickname(root: AccessibilityNodeInfo) {
+        val width = try {
+            currentScreenRect().width()
+        } catch (_: Throwable) {
+            0
+        }
+        if (width <= 0) return
+        val found = try {
+            WechatIdReader.findSelfNickname(root, width)
+        } catch (_: Throwable) {
+            null
+        }
+        if (!found.isNullOrBlank() && found != lastSelfNickname) {
+            lastSelfNickname = found
+            app?.logger?.event("self_nickname_refreshed")
         }
     }
 
@@ -517,6 +552,8 @@ open class WeChatReadService : AccessibilityService() {
     companion object {
         /** 轮询周期：2 秒，与 PRD 的去抖窗口一致。 */
         private const val POLL_INTERVAL_MS = 2_000L
+        /** 微信号重扫节流（毫秒）：双开切换账号后最多 10 秒内刷新。 */
+        private const val WECHAT_ID_RESCAN_MS = 10_000L
 
         /** 事件加速通道的去抖延时。 */
         private const val EVENT_DEBOUNCE_MS = 600L
