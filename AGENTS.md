@@ -23,3 +23,11 @@
    - 单聊界面提取头像昵称时，同步采集屏幕右半侧（`centerX >= screenWidth / 2`）的本人气泡头像昵称作为 `self_nickname` 上报中控，供中控精准区分同一手机上的主号与分身旧号。
 5. **本地零聊天落盘铁律**：
    - `SharedPreferences` 与 `SafeLogger` 严禁写入任何聊天消息原文、会话标题原文或对方微信号明文；离开微信前台必须立即清空内存会话快照并收起悬浮窗。
+6. **100% 云端 GitHub Actions 编译铁律（严禁在本机安装环境或跑本地 Gradle 编译）**：
+   - **禁止在开发机本地安装 JDK / Android SDK 或执行 `.\gradlew.bat` 本地编译 APK**！所有 Kotlin 编译、JVM 单测（`testDebugUnitTest`）与 APK 打包（`assembleDebug`）**必须 100% 通过远端 GitHub Actions（`DBkevin/wuzhangai` 仓库 `.github/workflows/build.yml`）云端执行**。
+   - **固定 CI Debug 签名防清配置**：`app/build.gradle.kts` 的 `debug` 构建必须绑定仓库内固定的测试签名文件（`app/debug-ci.jks`，标准公开测试口令 `android`，不含任何生产密钥），确保 GitHub Actions 每次云端产出的 `app-debug.apk` 签名完全一致，支持真机直接 `adb install -r` 无损覆盖升级（不丢手机端 URL 配置与无障碍授权）。
+   - **DSH 云端编译标准闭环流程**（复用 `tools\deploy.ps1` 的 GitHub API 凭据机制，禁止使用任何 `adb shell input`）：
+     1. 完成本地静态零写入红线扫描（`0` 命中）后，`git commit` 并 `git push origin main` 触发 GitHub Actions `Android Build`；
+     2. 通过 `C:\Program Files\Git\cmd\git.exe credential fill` 获取 GitHub Token，轮询 `https://api.github.com/repos/DBkevin/wuzhangai/actions/runs?per_page=5` 等待当前 `head_sha` 对应的 workflow 完成；
+     3. 若 `conclusion != 'success'`：自动下载 `build-logs` 产物读取编译/单测报错并修复重推，直至云端全绿；
+     4. 若 `conclusion == 'success'`：自动下载 `app-debug-apk` 解压至 `D:\project\wuzhanai\.runtime\app-debug.apk`；若 USB 真机在线（`adb devices`），直接执行 `adb install -r D:\project\wuzhanai\.runtime\app-debug.apk` 完成覆盖安装（严禁 `adb uninstall`，除非首次切换至固定 `debug-ci.jks` 签名时经用户确认）。

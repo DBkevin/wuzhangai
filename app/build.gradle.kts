@@ -28,6 +28,17 @@ android {
         }
         debug {
             isMinifyEnabled = false
+            // AGENTS.md 铁律 6：固定仓库内测试签名，保证云端 CI 产物可无损 install -r 覆盖。
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug-ci.jks")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
         }
     }
 
