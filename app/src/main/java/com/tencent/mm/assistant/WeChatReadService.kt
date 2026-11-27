@@ -22,6 +22,15 @@ import com.tencent.mm.assistant.overlay.FloatingBallBadge
 import com.tencent.mm.assistant.overlay.ProfileContext
 
 /**
+ * WP-29 T3：离开微信前台（回桌面/切其它 App）时的纯生命周期判定。
+ * 主号与分身切换时绝不允许复用上一账号残留的本人昵称。
+ */
+object WechatLifecycleRules {
+    @Suppress("UNUSED_PARAMETER")
+    fun selfNicknameAfterLeavingWechat(last: String?): String? = null
+}
+
+/**
  * 只读无障碍服务（业务实现）。
  *
  * ============================ 硬性边界声明 ============================
@@ -169,6 +178,8 @@ open class WeChatReadService : AccessibilityService() {
             lastChatTitle = null
             lastChatMessages = emptyList()
             lastChatWechatId = null
+            // WP-29 T3：切离微信必须清空上一账号的本人昵称，杜绝主号/分身串号。
+            lastSelfNickname = WechatLifecycleRules.selfNicknameAfterLeavingWechat(lastSelfNickname)
             application.overlay.hideAll()
             return
         }

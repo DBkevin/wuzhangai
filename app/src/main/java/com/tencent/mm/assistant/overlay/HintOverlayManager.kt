@@ -32,6 +32,47 @@ import com.tencent.mm.assistant.util.SafeLogger
 import com.tencent.mm.assistant.util.SettingsStore
 
 /**
+ * WP-29 T3：非运营渠道统一硬锁（与后端 isOperatorForbiddenChannel 同源）。
+ * 医美APP 全系 / 抖音团购 / 新氧 / 老带新等渠道一律不挂引流运营。
+ */
+object OperatorChannelRules {
+    private val forbiddenOne = setOf(
+        "医美APP", "老带新/新带新", "员工介绍", "三方转诊", "自然上门", "线下",
+    )
+
+    private val forbiddenTwo = listOf(
+        "美团", "点评", "抖音团购", "抖音医美", "抖音生美",
+        "新氧", "更美", "悦美", "老带新", "新带新", "自然上门",
+    )
+
+    fun isOperatorForbidden(channel: ChannelOption): Boolean {
+        val one = channel.sourceOne.trim()
+        val two = channel.sourceTwo.trim()
+        return forbiddenOne.contains(one) || forbiddenTwo.any { two.contains(it) || one.contains(it) }
+    }
+
+    /** 非运营渠道一律返回 null（建档反馈的 belongServiceId 随之置空）。 */
+    fun effectiveOperator(channel: ChannelOption, operator: OperatorOption?): OperatorOption? =
+        if (isOperatorForbidden(channel)) null else operator
+}
+
+/**
+ * WP-29 T3：补录按钮只允许展示脱敏号；回传中控的哨兵值绝不渲染成按钮文案。
+ */
+object SupplementPhoneUi {
+    fun displayMask(response: CenterResponse): String? {
+        val raw = response.pendingPhone?.takeIf { it.isNotBlank() } ?: return null
+        return response.pendingMask?.takeIf { it.isNotBlank() } ?: maskPhone(raw)
+    }
+
+    fun feedbackPhone(response: CenterResponse): String? =
+        response.pendingPhone?.takeIf { it.isNotBlank() }
+
+    private fun maskPhone(phone: String): String =
+        if (phone.length >= 7) phone.take(3) + "****" + phone.takeLast(4) else phone
+}
+
+/**
  * 最近一次资料页上下文（WP-26）：员工点「一键建入岚时」渠道按钮时随 /feedback 回传。
  * 只保存当前已打开资料页上人工可见的信息，不做任何后台遍历。
  */
@@ -686,13 +727,12 @@ class HintOverlayManager(
     /** 一键补录岚时主/备手机号。 */
     private fun phonePanel(response: CenterResponse): View {
         val wrap = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
-        val phone = response.pendingPhone
-        if (phone.isNullOrBlank()) {
+        val mask = SupplementPhoneUi.displayMask(response)
+        if (mask == null) {
             wrap.addView(rowView(appContext.getString(R.string.overlay_phone_none), null))
             return wrap
         }
         val mainSlot = response.phoneSlot != "spare"
-        val mask = response.pendingMask?.takeIf { it.isNotBlank() } ?: phone
         val label = appContext.getString(
             if (mainSlot) R.string.overlay_btn_supplement_main_fmt else R.string.overlay_btn_supplement_spare_fmt,
             mask,
@@ -709,7 +749,7 @@ class HintOverlayManager(
             setOnClickListener {
                 isEnabled = false
                 text = appContext.getString(R.string.overlay_btn_submitting)
-                sendSupplementFeedback(response, phone, this, label)
+                sendSupplementFeedback(response, SupplementPhoneUi.feedbackPhone(response).orEmpty(), this, label)
             }
         }
         wrap.addView(
@@ -1062,7 +1102,8 @@ class HintOverlayManager(
         val titleSnapshot = lastTitle
         // 记忆上次所选渠道/运营（只存名称，不存任何聊天内容）。
         settings.lastChannelRaw = LastChoiceMemory.encodeChannel(channel.sourceOne, channel.sourceTwo)
-        val effectiveOperator = if (isMeituanChannel(channel)) null else operator
+        // WP-29 T3：抖音团购/新氧/老带新等非运营渠道强制置空，且不写坏 lastOperatorRaw。
+        val effectiveOperator = OperatorChannelRules.effectiveOperator(channel, operator)
         if (effectiveOperator != null) {
             settings.lastOperatorRaw = LastChoiceMemory.encodeOperator(effectiveOperator.id, effectiveOperator.name)
         }
@@ -1104,11 +1145,9 @@ class HintOverlayManager(
         }
     }
 
-    /** 美团/大众点评渠道不挂运营（与后端硬锁一致，避免渠道业绩串档）。 */
+    /** 非运营渠道不挂运营（与后端硬锁一致，避免渠道业绩串档）。 */
     private fun isMeituanChannel(channel: ChannelOption): Boolean =
-        channel.sourceTwo.contains("美团") ||
-            channel.sourceTwo.contains("大众点评") ||
-            channel.sourceOne.contains("美团")
+        OperatorChannelRules.isOperatorForbidden(channel)
 
     /** 从备注/标题中提取首个 11 位手机号（仅内存使用，绝不落盘）。 */
     private fun extractFirstPhone(vararg texts: String?): String? {

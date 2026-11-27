@@ -1,11 +1,16 @@
 package com.tencent.mm.assistant
 
 import com.tencent.mm.assistant.core.ProfilePageReader
+import com.tencent.mm.assistant.net.CenterAction
 import com.tencent.mm.assistant.net.CenterResponse
+import com.tencent.mm.assistant.net.ChannelOption
+import com.tencent.mm.assistant.net.OperatorOption
 import com.tencent.mm.assistant.net.ReadReport
 import com.tencent.mm.assistant.overlay.ArchiveRules
 import com.tencent.mm.assistant.overlay.FloatingBallBadge
+import com.tencent.mm.assistant.overlay.OperatorChannelRules
 import com.tencent.mm.assistant.overlay.PanelLifecycle
+import com.tencent.mm.assistant.overlay.SupplementPhoneUi
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -168,5 +173,45 @@ class Wp28OverlayAndProfileTest {
         val json = JSONObject(report.toJson())
         assertEquals("13900002222", json.getString("contact_phone"))
         assertEquals("peek", json.getString("mode"))
+    }
+
+    @Test
+    fun `operator forbidden channels clear belong service id`() {
+        val operator = OperatorOption(id = "9001", name = "张育兴")
+        val forbidden = listOf(
+            ChannelOption("医美APP", "新氧", "医美APP / 新氧", false),
+            ChannelOption("医美APP", "抖音团购医美", "医美APP / 抖音团购医美", false),
+            ChannelOption("老带新/新带新", "", "老带新/新带新", false),
+            ChannelOption("医美APP", "美团", "医美APP / 美团", false),
+        )
+        for (channel in forbidden) {
+            assertTrue("${channel.sourceOne}/${channel.sourceTwo} 应禁挂运营", OperatorChannelRules.isOperatorForbidden(channel))
+            assertNull(OperatorChannelRules.effectiveOperator(channel, operator))
+        }
+        val allowed = ChannelOption("吴院IP", "吴院快手", "吴院IP / 吴院快手", false)
+        assertFalse(OperatorChannelRules.isOperatorForbidden(allowed))
+        assertEquals(operator, OperatorChannelRules.effectiveOperator(allowed, operator))
+    }
+
+    @Test
+    fun `supplement button shows mask and posts session sentinel`() {
+        val response = CenterResponse(
+            action = CenterAction.SHOW_HINT,
+            hint = null,
+            candidates = emptyList(),
+            requestId = "req-wp29",
+            pendingPhone = "session_cached",
+            pendingMask = "138****7766",
+            phoneSlot = "spare",
+        )
+        assertEquals("138****7766", SupplementPhoneUi.displayMask(response))
+        assertFalse(SupplementPhoneUi.displayMask(response)!!.contains("session_cached"))
+        assertEquals("session_cached", SupplementPhoneUi.feedbackPhone(response))
+    }
+
+    @Test
+    fun `leaving wechat clears last self nickname`() {
+        assertNull(WechatLifecycleRules.selfNicknameAfterLeavingWechat("主号本人昵称"))
+        assertNull(WechatLifecycleRules.selfNicknameAfterLeavingWechat(null))
     }
 }

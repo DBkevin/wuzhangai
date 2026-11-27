@@ -93,7 +93,7 @@
     <string name="overlay_operator_title">引流运营（写入岚时所属客服）</string>
     <string name="overlay_operator_none">无运营（自然/美团）</string>
     <string name="overlay_operator_selected_fmt">已选运营：%1$s</string>
-    <string name="overlay_operator_meituan_locked">美团 / 大众点评渠道会自动置空运营（防渠道业绩串档）</string>
+    <string name="overlay_operator_meituan_locked">医美APP / 抖音团购 / 新氧 / 老带新 / 自然上门等非运营渠道会自动置空运营（防渠道业绩串档）</string>
 
     <!-- WP-28：本地预占（岚时未建档）警示 -->
     <string name="overlay_asset_unbound_title">⚠️ 岚时未建档（当前仅微信预占，岚时后台尚无此人）</string>
