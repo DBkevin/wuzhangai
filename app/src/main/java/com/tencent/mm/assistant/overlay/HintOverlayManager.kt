@@ -596,7 +596,7 @@ class HintOverlayManager(
             setOnClickListener {
                 isEnabled = false
                 text = appContext.getString(R.string.overlay_btn_submitting)
-                sendSupplementFeedback(response, phone)
+                sendSupplementFeedback(response, phone, this, label)
             }
         }
         wrap.addView(
@@ -614,12 +614,19 @@ class HintOverlayManager(
         return wrap
     }
 
-    private fun sendSupplementFeedback(response: CenterResponse, phone: String) {
+    private fun sendSupplementFeedback(
+        response: CenterResponse,
+        phone: String,
+        triggerBtn: Button? = null,
+        originalLabel: String = "",
+    ) {
+        val sessionKey = currentSessionKey ?: ""
+        val titleSnapshot = lastTitle
         val feedback = CandidateFeedback(
             requestId = response.requestId,
             serviceAccountId = settings.serviceAccountId,
             deviceId = settings.deviceId,
-            title = lastTitle,
+            title = titleSnapshot,
             label = "supplement_his_phone",
             candidateIndex = 0,
             accepted = true,
@@ -631,7 +638,18 @@ class HintOverlayManager(
             profileRegion = profileContext?.profileRegion,
             phone = phone,
         )
-        centerClient.feedback(feedback)
+        centerClient.feedbackWithResponse(feedback) { resp ->
+            mainHandler.post {
+                if (resp == null) {
+                    triggerBtn?.isEnabled = true
+                    if (originalLabel.isNotEmpty()) triggerBtn?.text = originalLabel
+                    Toast.makeText(appContext, "网络请求超时或失败，请重试", Toast.LENGTH_SHORT).show()
+                    return@post
+                }
+                lastBadge = FloatingBallBadge.ARCHIVED
+                expandInternal(resp, sessionKey, titleSnapshot, "chat")
+            }
+        }
     }
 
     private fun roleLabel(role: String): String = when (role) {
@@ -788,8 +806,9 @@ class HintOverlayManager(
         LastChoiceMemory.decodeOperator(settings.lastOperatorRaw)?.let { last ->
             operators.firstOrNull { it.id == last.id && it.name == last.name }?.let { selectedOperator = it }
         }
+        val primaryLabel = appContext.getString(R.string.overlay_btn_create_his_fmt, primary.label)
         val primaryButton = Button(appContext).apply {
-            text = appContext.getString(R.string.overlay_btn_create_his_fmt, primary.label)
+            text = primaryLabel
             textSize = 13f
             isAllCaps = false
             minWidth = 0
@@ -800,7 +819,7 @@ class HintOverlayManager(
             setOnClickListener {
                 isEnabled = false
                 text = appContext.getString(R.string.overlay_btn_creating_his)
-                sendCreateFeedback(response, primary, options.indexOf(primary), selectedOperator)
+                sendCreateFeedback(response, primary, options.indexOf(primary), selectedOperator, this, primaryLabel)
             }
         }
         wrap.addView(
@@ -833,7 +852,7 @@ class HintOverlayManager(
                     setOnClickListener {
                         isEnabled = false
                         text = appContext.getString(R.string.overlay_btn_creating_his)
-                        sendCreateFeedback(response, channel, options.indexOf(channel), selectedOperator)
+                        sendCreateFeedback(response, channel, options.indexOf(channel), selectedOperator, this, channel.label)
                     }
                 }
                 row.addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -909,9 +928,13 @@ class HintOverlayManager(
         channel: ChannelOption,
         index: Int,
         operator: OperatorOption?,
+        triggerBtn: Button? = null,
+        originalLabel: String = "",
     ) {
         val context = profileContext
         val draft = response.hisDraft
+        val sessionKey = currentSessionKey ?: ""
+        val titleSnapshot = lastTitle
         // 记忆上次所选渠道/运营（只存名称，不存任何聊天内容）。
         settings.lastChannelRaw = LastChoiceMemory.encodeChannel(channel.sourceOne, channel.sourceTwo)
         val effectiveOperator = if (isMeituanChannel(channel)) null else operator
@@ -922,7 +945,7 @@ class HintOverlayManager(
             requestId = response.requestId,
             serviceAccountId = settings.serviceAccountId,
             deviceId = settings.deviceId,
-            title = lastTitle,
+            title = titleSnapshot,
             label = channel.label,
             candidateIndex = index,
             accepted = true,
@@ -937,7 +960,17 @@ class HintOverlayManager(
             belongServiceId = effectiveOperator?.id?.takeIf { it.isNotBlank() },
             belongServiceName = effectiveOperator?.name?.takeIf { it.isNotBlank() },
         )
-        centerClient.feedback(feedback)
+        centerClient.feedbackWithResponse(feedback) { resp ->
+            mainHandler.post {
+                if (resp == null) {
+                    triggerBtn?.isEnabled = true
+                    if (originalLabel.isNotEmpty()) triggerBtn?.text = originalLabel
+                    Toast.makeText(appContext, "建档请求超时或失败，请核实网络后重试", Toast.LENGTH_SHORT).show()
+                    return@post
+                }
+                expandInternal(resp, sessionKey, titleSnapshot, "profile")
+            }
+        }
     }
 
     /** 美团/大众点评渠道不挂运营（与后端硬锁一致，避免渠道业绩串档）。 */
@@ -1078,8 +1111,8 @@ class HintOverlayManager(
         /** 无角标闲置 4 秒后降为 45% 不透明度。 */
         const val IDLE_ALPHA_MS = 4_000L
 
-        /** 建档成功后自动收起面板回到小悬浮球。 */
-        const val AUTO_COLLAPSE_MS = 900L
+        /** 建档成功后展示 1.5 秒再自动收起面板回到小悬浮球。 */
+        const val AUTO_COLLAPSE_MS = 1_500L
 
         /** no_match 自动关闭延时。 */
         const val AUTO_DISMISS_MS = 5_000L
