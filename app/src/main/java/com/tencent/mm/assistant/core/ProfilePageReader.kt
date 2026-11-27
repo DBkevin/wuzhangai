@@ -8,11 +8,11 @@ package com.tencent.mm.assistant.core
  *
  * 边界：
  *   * 绝不点击头像、绝不打开页面 —— 页面由人工打开，本类只读已经显示出来的内容；
- *   * 只取「昵称 + 微信号」两个字段，不取手机号、地区、标签、朋友圈等；
+ *   * 只取「昵称 + 微信号 + 已展示标签/地区/电话」等页面可见文本，不遍历通讯录、不读朋友圈；
  *   * 不是资料页时返回 null，不做任何推断。
  */
 data class ProfileInfo(
-    /** 资料页顶部的昵称/备注名。 */
+    /** 资料页顶部的昵称/备注名（WP-28：始终取顶部真实备注，不再被「昵称: xxx」行覆盖）。 */
     val nickname: String?,
     /** 资料页展示的微信号（可能为空：对方未公开或读取失败）。 */
     val wechatId: String?,
@@ -23,6 +23,13 @@ data class ProfileInfo(
     val tags: List<String> = emptyList(),
     /** 资料页已展示的「地区」文本（如「河南  驻马店」）。 */
     val region: String? = null,
+    /**
+     * WP-28：资料页「电话 / 手机 / 描述」栏与备注行里出现的全部 11 位手机号（去重）。
+     * 仅用于中控实时查重与建档透传，绝不本地持久化。
+     */
+    val phones: List<String> = emptyList(),
+    /** WP-28：页面若存在「昵称: xxx」行，记录冒号后的原昵称；昵称展示仍以顶部备注为准。 */
+    val rawNicknameLine: String? = null,
 )
 
 object ProfilePageReader {
@@ -43,12 +50,21 @@ object ProfilePageReader {
         "发消息", "音视频通话", "添加到通讯录", "设置备注和标签", "朋友权限",
         "投诉", "删除", "朋友圈", "视频号", "转账", "语音通话", "分享",
         "置顶聊天", "消息免打扰", "查找聊天内容", "清空聊天记录",
+        // WP-28：资料页固定词，避免被误当成昵称/标签。
+        "朋友资料", "更多信息", "电话", "电话号码", "手机", "描述", "共同群聊",
     )
 
     /** 带冒号前缀的字段（"昵称: xxx" / "地区: xxx"），不参与昵称候选。 */
     private val FIELD_PREFIXES = listOf(
         "微信号", "昵称", "地区", "备注", "标签", "来源", "个性签名",
+        "电话", "手机", "描述", "更多信息", "共同群聊",
     )
+
+    /** 11 位中国大陆手机号（前后不得紧邻数字，避免截取更长数字串）。 */
+    private val PHONE_REGEX = Regex("""(?<!\d)(1[3-9]\d{9})(?!\d)""")
+
+    /** 资料页的手机号字段名。 */
+    private val PHONE_FIELD_PREFIXES = listOf("电话", "电话号码", "手机", "手机号")
 
     /** 资料页上必须出现的动作按钮（用于确认"这确实是资料页"）。 */
     private val ACTION_TEXTS = setOf(
@@ -101,15 +117,37 @@ object ProfilePageReader {
             t.length in 1..MAX_NICKNAME_LEN &&
                 !LABELS.contains(t) &&
                 !isFieldLine(t) &&
-                !looksLikeWechatId(t)
+                !looksLikeWechatId(t) &&
+                !isPhoneFieldLine(t) &&
+                !PHONE_REGEX.matches(t.trim())
         }
+
+        // WP-28：资料页「电话 / 手机 / 描述」栏或备注里的 11 位手机号（去重保序）。
+        val phones = texts.flatMap { text ->
+            PHONE_REGEX.findAll(text).map { it.value }.toList()
+        }.distinct()
+
+        // 「昵称: xxx」行只作为原昵称留痕，展示名仍以顶部真实备注为准。
+        val rawNicknameLine = texts.firstOrNull { it.startsWith("昵称") }
+            ?.removePrefix("昵称")
+            ?.trimStart(':', '：', ' ')
+            ?.trim()
+            ?.ifEmpty { null }
 
         return ProfileInfo(
             nickname = nickname,
             wechatId = wechatId,
             tags = parseTags(texts),
             region = parseRegion(texts),
+            phones = phones,
+            rawNicknameLine = rawNicknameLine,
         )
+    }
+
+    /** 「电话 / 手机 / 电话号码」字段行。 */
+    private fun isPhoneFieldLine(text: String): Boolean {
+        val trimmed = text.trim()
+        return PHONE_FIELD_PREFIXES.any { trimmed == it || trimmed.startsWith("$it:") || trimmed.startsWith("$it：") }
     }
 
     /**

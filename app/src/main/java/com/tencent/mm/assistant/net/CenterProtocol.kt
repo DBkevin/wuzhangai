@@ -56,6 +56,11 @@ data class ReadReport(
      * 为空时保持 WP-26 的旧语义（服务端按 page_type 处理）。
      */
     val mode: String? = null,
+    /**
+     * WP-28：资料页直接读到的 11 位手机号（「电话/手机/描述」栏或备注名）。
+     * 仅随本次请求回传，不落任何本地存储。
+     */
+    val contactPhone: String? = null,
 ) {
     fun toJson(): String {
         val root = JSONObject()
@@ -72,6 +77,7 @@ data class ReadReport(
         root.put("linked_title", linkedTitle ?: JSONObject.NULL)
         root.put("profile_nickname", profileNickname ?: JSONObject.NULL)
         root.put("identity_key", identityKey ?: JSONObject.NULL)
+        root.put("contact_phone", contactPhone ?: JSONObject.NULL)
         root.put("wechat_id", wechatId ?: serviceAccountId)
         root.put("self_nickname", selfNickname ?: JSONObject.NULL)
         val tagArr = JSONArray()
@@ -119,6 +125,8 @@ data class HisDraft(
     val matchedSourceTwo: String?,
     val matchedTags: List<String>,
     val wxAddedAt: String?,
+    /** WP-28：待建草稿携带的手机号（安卓优先用 ProfileContext.phone，缺失时回退此值）。 */
+    val phone: String? = null,
 )
 
 /** 一键建档渠道按钮。 */
@@ -275,6 +283,7 @@ data class CenterResponse(
                 matchedSourceTwo = obj.optStringOrNull("matched_source_two")?.take(MAX_TEXT),
                 matchedTags = tags,
                 wxAddedAt = obj.optStringOrNull("wx_added_at")?.take(MAX_TEXT),
+                phone = obj.optStringOrNull("phone")?.take(MAX_TEXT),
             )
         }
 

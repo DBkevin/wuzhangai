@@ -9,6 +9,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -40,7 +41,34 @@ data class ProfileContext(
     val linkedTitle: String?,
     val profileTags: List<String>,
     val profileRegion: String?,
+    /** WP-28：资料页电话/备注里读到的手机号（仅内存，建档时回传）。 */
+    val phone: String? = null,
 )
+
+/**
+ * WP-28：面板自动收起的纯判定逻辑（与 Android API 解耦，JVM 与 Instrumentation 共用）。
+ */
+object PanelLifecycle {
+
+    /** 离开受支持页面：已展开面板且不在建档成功展示期 → 立即收起。 */
+    fun shouldCollapseOnLeave(panelVisible: Boolean, nowMs: Long, holdUntilMs: Long): Boolean =
+        panelVisible && nowMs >= holdUntilMs
+
+    /** 页面类型/会话切换：面板不属于新页面 → 收起（展示期内不打断）。 */
+    fun shouldCollapseOnContextChange(
+        panelVisible: Boolean,
+        nowMs: Long,
+        holdUntilMs: Long,
+        expandedPageType: String?,
+        currentSessionKey: String?,
+        newPageType: String,
+        newSessionKey: String,
+    ): Boolean {
+        if (!panelVisible || nowMs < holdUntilMs) return false
+        return expandedPageType != newPageType ||
+            (currentSessionKey != null && currentSessionKey != newSessionKey)
+    }
+}
 
 /**
  * 悬浮窗管理。
@@ -81,12 +109,28 @@ class HintOverlayManager(
     /** 员工点击悬浮球：由读屏服务根据当前页发起 open 请求。 */
     private var onBallClick: (() -> Unit)? = null
 
+    /** 测试专用：非空时拦截 /feedback 回传，便于 Instrumentation 断言（生产恒为 null）。 */
+    internal var feedbackInterceptor: ((CandidateFeedback) -> Unit)? = null
+
+    /**
+     * 测试专用：观察实际写入系统剪贴板的文本。
+     * 部分 ROM（如 MagicOS/Android 16）禁止测试进程读回剪贴板内容，
+     * 因此用「写入入参 + hasPrimaryClip」双断言证明真实写入了正确备注码。
+     */
+    internal var clipboardObserverForTest: ((String) -> Unit)? = null
+
     private var ballView: FloatingBallView? = null
     private var ballParams: WindowManager.LayoutParams? = null
     private var panelVisible = false
     private var lastBadge: String = FloatingBallBadge.NONE
     private var lastHealthy = true
     private var idleRunnable: Runnable? = null
+
+    /** WP-28：建档成功展示期（1.5s）内禁止自动收起，避免提示一闪而没。 */
+    private var autoCollapseUntilMs = 0L
+
+    /** WP-28：当前展开面板所属页面类型（chat / profile），用于切换页面时精准收起。 */
+    private var expandedPageType: String? = null
 
     fun setOnBallClick(action: () -> Unit) {
         onBallClick = action
@@ -133,6 +177,47 @@ class HintOverlayManager(
 
     fun isPanelVisible(): Boolean = panelVisible
 
+    /** Instrumentation 断言用：当前角标枚举值。 */
+    internal fun currentBadgeForTest(): String = lastBadge
+
+    /**
+     * WP-28：离开受支持页面（退回微信聊天列表/通讯录/发现/我/群聊）时调用。
+     * 立即清空角标并收起面板，避免上一位顾客的面板与「撞/档」残留。
+     */
+    fun onLeaveSupportedPage(healthy: Boolean) {
+        mainHandler.post {
+            lastBadge = FloatingBallBadge.NONE
+            lastHealthy = healthy
+            if (PanelLifecycle.shouldCollapseOnLeave(panelVisible, SystemClock.uptimeMillis(), autoCollapseUntilMs)) {
+                collapseInternal()
+            } else {
+                if (!panelVisible) ensureBall()
+                ballView?.setBadge(lastBadge)
+                ballView?.setHealthy(healthy)
+                scheduleIdle()
+            }
+        }
+    }
+
+    /**
+     * WP-28：页面类型或会话切换时，若已展开的面板不属于新页面则立即收起
+     * （建档成功 1.5s 展示期内不打断）。
+     */
+    fun collapseIfContextChanged(newPageType: String, newSessionKey: String) {
+        mainHandler.post {
+            val shouldCollapse = PanelLifecycle.shouldCollapseOnContextChange(
+                panelVisible = panelVisible,
+                nowMs = SystemClock.uptimeMillis(),
+                holdUntilMs = autoCollapseUntilMs,
+                expandedPageType = expandedPageType,
+                currentSessionKey = currentSessionKey,
+                newPageType = newPageType,
+                newSessionKey = newSessionKey,
+            )
+            if (shouldCollapse) collapseInternal()
+        }
+    }
+
     // ---------------------------------------------------------------- 展示
 
     /** 兼容旧调用：peek 只更新角标；其余动作展开面板。 */
@@ -172,7 +257,8 @@ class HintOverlayManager(
         removeBallInternal()
 
         // 岚时建档成功后中控下发 ` #<档案号>`：自动写入系统剪贴板（粘贴仍由人工完成）。
-        response.autoCopyText?.trim()?.takeIf { it.isNotEmpty() }?.let { text ->
+        // 注意保留前导空格（` #` 是备注分隔符），仅去掉尾部空白。
+        response.autoCopyText?.takeIf { it.isNotBlank() }?.let { text ->
             copyToClipboard(
                 text,
                 appContext.getString(R.string.overlay_copied_remark_code_fmt, text.trim()),
@@ -214,11 +300,13 @@ class HintOverlayManager(
         lastResponse = response
         lastTitle = title
         panelVisible = true
+        expandedPageType = pageType
         logger.event("overlay_shown")
 
-        // 建档成功自动收起面板回到小悬浮球（角标变「档」）。
+        // 建档成功自动收起面板回到小悬浮球（角标变「档」），保留 1.5s 供员工确认。
         if (!response.autoCopyText.isNullOrBlank()) {
             lastBadge = FloatingBallBadge.ARCHIVED
+            autoCollapseUntilMs = SystemClock.uptimeMillis() + AUTO_COLLAPSE_MS
             mainHandler.postDelayed({ collapseInternal() }, AUTO_COLLAPSE_MS)
             return
         }
@@ -233,6 +321,8 @@ class HintOverlayManager(
     private fun collapseInternal() {
         removePanelInternal()
         panelVisible = false
+        expandedPageType = null
+        autoCollapseUntilMs = 0L
         if (!ensureBall()) return
         ballView?.setHealthy(lastHealthy)
         ballView?.setBadge(lastBadge)
@@ -368,8 +458,14 @@ class HintOverlayManager(
 
     // ---------------------------------------------------------------- 视图构建
 
-    private fun buildView(response: CenterResponse, panelHeight: Int, pageType: String): View? {
-        val root = LinearLayout(appContext).apply {
+    /** Instrumentation 测试专用：不申请悬浮窗权限，直接构建真实视图树做同构点击。 */
+    internal fun buildViewForTest(response: CenterResponse, pageType: String = "chat"): View? {
+        val metrics = appContext.resources.displayMetrics
+        val heightRatio = if (response.action == CenterAction.PREPARE_HIS_CREATE) PREPARE_HEIGHT_RATIO else HEIGHT_RATIO
+        return buildView(response, (metrics.heightPixels * heightRatio).toInt(), pageType)
+    }
+
+    private fun buildView(response: CenterResponse, panelHeight: Int, pageType: String): View? {        val root = LinearLayout(appContext).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(8), dp(12), dp(8))
             background = cardBackground()
@@ -389,8 +485,13 @@ class HintOverlayManager(
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
         // WP-26/27：顶栏固定显示两个独立复制按钮（hint 或结构化 archive 里含档案号时）。
-        val headerDossierNo = HintCopyHelper.extractDossierNo(response.hint)
-            ?: response.archive?.customerNo?.takeIf { it.isNotBlank() }
+        // WP-28：仅微信预占（his_bound=false）时严禁出现任何档案号复制入口。
+        val headerDossierNo = if (response.archive != null && !ArchiveRules.canCopyDossierNo(response.archive.hisBound)) {
+            null
+        } else {
+            HintCopyHelper.extractDossierNo(response.hint)
+                ?: response.archive?.customerNo?.takeIf { it.isNotBlank() }
+        }
         headerDossierNo?.let { dossierNo ->
             header.addView(
                 smallButton(appContext.getString(R.string.overlay_btn_copy_dossier_no)) {
@@ -527,6 +628,18 @@ class HintOverlayManager(
             appendHintRows(wrap, response)
             return wrap
         }
+        if (!ArchiveRules.canShowDossierNo(archive.hisBound)) {
+            // WP-28：仅微信预占时，绝不展示本地 12 位占坑号与复制按钮。
+            wrap.addView(warningRow(appContext.getString(R.string.overlay_asset_unbound_title)))
+            wrap.addView(warningRow(appContext.getString(R.string.overlay_asset_unbound_tip)))
+            wrap.addView(rowView(appContext.getString(R.string.overlay_asset_name_fmt, archive.name), null))
+            archive.vipGrade?.takeIf { it.isNotBlank() }?.let {
+                wrap.addView(rowView(appContext.getString(R.string.overlay_asset_vip_fmt, it), null))
+            }
+            val deposit = archive.depositBalance?.takeIf { it.isNotBlank() } ?: "0"
+            wrap.addView(rowView(appContext.getString(R.string.overlay_asset_points_fmt, archive.availablePoints, deposit), null))
+            return wrap
+        }
         wrap.addView(rowView(appContext.getString(R.string.overlay_asset_no_fmt, archive.customerNo), archive.customerNo))
         wrap.addView(rowView(appContext.getString(R.string.overlay_asset_name_fmt, archive.name), null))
         archive.vipGrade?.takeIf { it.isNotBlank() }?.let {
@@ -638,6 +751,10 @@ class HintOverlayManager(
             profileRegion = profileContext?.profileRegion,
             phone = phone,
         )
+        feedbackInterceptor?.let {
+            it(feedback)
+            return
+        }
         centerClient.feedbackWithResponse(feedback) { resp ->
             mainHandler.post {
                 if (resp == null) {
@@ -700,6 +817,14 @@ class HintOverlayManager(
             row.addView(copyButton(copyText))
         }
         return row
+    }
+
+    /** 琥珀色警示行：用于「岚时未建档」等不可复制的强提醒。 */
+    private fun warningRow(text: String): View = TextView(appContext).apply {
+        this.text = text
+        setTextColor(0xFFFFB74D.toInt())
+        textSize = 13f
+        setPadding(0, dp(4), 0, dp(4))
     }
 
     /** 候选：文本（label + 置信度 + evidence）+ 右侧复制 + 下方两个决策按钮。 */
@@ -957,9 +1082,15 @@ class HintOverlayManager(
             profileNickname = context?.profileNickname ?: draft?.customerName,
             profileTags = context?.profileTags ?: draft?.matchedTags ?: emptyList(),
             profileRegion = context?.profileRegion,
+            // WP-28：建档必须携带资料页/备注里的手机号，否则老客会被微信号重复建档。
+            phone = context?.phone ?: extractFirstPhone(context?.profileNickname, titleSnapshot) ?: draft?.phone,
             belongServiceId = effectiveOperator?.id?.takeIf { it.isNotBlank() },
             belongServiceName = effectiveOperator?.name?.takeIf { it.isNotBlank() },
         )
+        feedbackInterceptor?.let {
+            it(feedback)
+            return
+        }
         centerClient.feedbackWithResponse(feedback) { resp ->
             mainHandler.post {
                 if (resp == null) {
@@ -978,6 +1109,15 @@ class HintOverlayManager(
         channel.sourceTwo.contains("美团") ||
             channel.sourceTwo.contains("大众点评") ||
             channel.sourceOne.contains("美团")
+
+    /** 从备注/标题中提取首个 11 位手机号（仅内存使用，绝不落盘）。 */
+    private fun extractFirstPhone(vararg texts: String?): String? {
+        val regex = Regex("""(?<!\d)(1[3-9]\d{9})(?!\d)""")
+        for (text in texts) {
+            regex.find(text.orEmpty())?.let { return it.value }
+        }
+        return null
+    }
 
 
     private fun copyButton(text: String): Button =
@@ -1029,6 +1169,7 @@ class HintOverlayManager(
                 return
             }
             cm.setPrimaryClip(ClipData.newPlainText("kf_hint", text))
+            clipboardObserverForTest?.invoke(text)
             Toast.makeText(
                 appContext,
                 toastMessage ?: appContext.getString(R.string.overlay_copied),

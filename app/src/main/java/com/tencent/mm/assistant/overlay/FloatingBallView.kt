@@ -26,8 +26,9 @@ object FloatingBallBadge {
     const val CONFLICT = "conflict"
     const val PHONE = "phone"
     const val ARCHIVED = "archived"
+    const val PENDING = "pending"
 
-    private val KNOWN = setOf(CONFLICT, PHONE, ARCHIVED)
+    private val KNOWN = setOf(CONFLICT, PHONE, ARCHIVED, PENDING)
 
     fun normalize(raw: String?): String {
         val value = raw?.trim()?.lowercase().orEmpty()
@@ -38,6 +39,7 @@ object FloatingBallBadge {
         CONFLICT -> "撞"
         PHONE -> "号"
         ARCHIVED -> "档"
+        PENDING -> "待"
         else -> ""
     }
 
@@ -45,6 +47,7 @@ object FloatingBallBadge {
         CONFLICT -> 0xFFE64A19.toInt()
         PHONE -> 0xFF1976D2.toInt()
         ARCHIVED -> 0xFF2E7D32.toInt()
+        PENDING -> 0xFF546E7A.toInt()
         else -> 0xFF9E9E9E.toInt()
     }
 
@@ -54,6 +57,18 @@ object FloatingBallBadge {
         idle && !hasBadge -> 0.45f
         else -> 1f
     }
+}
+
+/**
+ * WP-28：档案号展示规则（纯函数，供 View 与 JVM 单测共用）。
+ * 仅微信本地预占（his_bound=false）时，岚时后台并无此人，绝不能展示/复制占坑号。
+ */
+object ArchiveRules {
+    const val UNBOUND_KEYWORD = "岚时未建档"
+
+    fun canShowDossierNo(hisBound: Boolean): Boolean = hisBound
+
+    fun canCopyDossierNo(hisBound: Boolean): Boolean = hisBound
 }
 
 /**
@@ -83,6 +98,7 @@ class FloatingBallView @JvmOverloads constructor(
     private var lastRawX = 0f
     private var lastRawY = 0f
     private var dragging = false
+    private var currentBadge: String = FloatingBallBadge.NONE
 
     init {
         layoutParams = LayoutParams(wrapSize, wrapSize)
@@ -117,6 +133,7 @@ class FloatingBallView @JvmOverloads constructor(
 
     /** 更新角标（空串即隐藏）。 */
     fun setBadge(badge: String?) {
+        currentBadge = FloatingBallBadge.normalize(badge)
         val text = FloatingBallBadge.textFor(badge)
         badgeView.text = text
         badgeView.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
@@ -124,6 +141,12 @@ class FloatingBallView @JvmOverloads constructor(
             badgeView.background = badgeDrawable(FloatingBallBadge.colorFor(badge))
         }
     }
+
+    /** 当前角标文字（Instrumentation 断言用）。 */
+    fun badgeText(): String = badgeView.text.toString()
+
+    /** 当前角标枚举值（pending/conflict/phone/archived/空）。 */
+    fun badgeValue(): String = currentBadge
 
     /** 服务健康指示灯：true=翠绿（正常），false=红色（网络/鉴权异常）。 */
     fun setHealthy(healthy: Boolean) {

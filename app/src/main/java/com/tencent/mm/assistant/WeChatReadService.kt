@@ -7,6 +7,8 @@ import android.os.Looper
 import android.os.PowerManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Toast
+import com.tencent.mm.assistant.R
 import com.tencent.mm.assistant.core.AccessibilityNodeTree
 import com.tencent.mm.assistant.core.ChatScreenDetector
 import com.tencent.mm.assistant.core.ExtractResult
@@ -16,6 +18,7 @@ import com.tencent.mm.assistant.core.ReadStatus
 import com.tencent.mm.assistant.core.ReportGate
 import com.tencent.mm.assistant.core.forEachNode
 import com.tencent.mm.assistant.net.ReadReport
+import com.tencent.mm.assistant.overlay.FloatingBallBadge
 import com.tencent.mm.assistant.overlay.ProfileContext
 
 /**
@@ -220,6 +223,8 @@ open class WeChatReadService : AccessibilityService() {
         lastProfileInfo = profile
         lastProfileLinkedTitle = linkedTitle
         lastChatWechatId = wechatId
+        val sessionKey = "profile:" + (wechatId ?: nickname ?: "unknown")
+        application.overlay.collapseIfContextChanged("profile", sessionKey)
 
         application.logger.event(
             "profile id_len=" + (wechatId?.length ?: -1) +
@@ -235,6 +240,7 @@ open class WeChatReadService : AccessibilityService() {
                 linkedTitle = linkedTitle,
                 profileTags = profile.tags,
                 profileRegion = profile.region,
+                phone = profile.phones.firstOrNull(),
             ),
         )
 
@@ -248,8 +254,7 @@ open class WeChatReadService : AccessibilityService() {
             sessionKey = "profile:" + (wechatId ?: nickname ?: "unknown"),
             profile = profile,
             linkedTitle = linkedTitle,
-        )
-    }
+        )    }
 
     /**
      * 判断当前根节点是否属于微信。
@@ -368,7 +373,8 @@ open class WeChatReadService : AccessibilityService() {
                 lastChatMessages = emptyList()
                 lastChatWechatId = null
                 lastPeekSignature = null
-                application.overlay.showBall(lastNetworkOk)
+                // WP-28：退回微信列表/通讯录/发现/我等页面，立即收起残留面板与角标。
+                application.overlay.onLeaveSupportedPage(lastNetworkOk)
             }
 
             is ExtractResult.TitleUnreadable ->
@@ -389,6 +395,7 @@ open class WeChatReadService : AccessibilityService() {
         sessionKey: String,
     ) {
         val application = app ?: return
+        application.overlay.collapseIfContextChanged("chat", sessionKey)
         lastProfileInfo = null
         lastChatTitle = title
         lastChatMessages = messages
@@ -419,7 +426,7 @@ open class WeChatReadService : AccessibilityService() {
         linkedTitle: String?,
     ) {
         val application = app ?: return
-        val phone = extractPhone(listOfNotNull(title, linkedTitle, profile?.nickname) + messages)
+        val phone = profile?.phones?.firstOrNull() ?: extractPhone(listOfNotNull(title, linkedTitle, profile?.nickname) + messages)
         val signature = pageType + "|" + (wechatId ?: title ?: "") + "|" + phone
         if (signature == lastPeekSignature) return
         lastPeekSignature = signature
@@ -442,6 +449,8 @@ open class WeChatReadService : AccessibilityService() {
             selfNickname = lastSelfNickname,
             profileTags = profile?.tags ?: emptyList(),
             profileRegion = profile?.region,
+            // WP-28：把资料页电话/描述栏读到的手机号一并回传，供中控实时查重。
+            contactPhone = profile?.phones?.firstOrNull(),
             mode = "peek",
         )
         application.centerClient.report(report) { response ->
@@ -456,6 +465,11 @@ open class WeChatReadService : AccessibilityService() {
     /** 员工主动点击悬浮球：按当前页发一次完整 open 请求并展开场景化二级面板。 */
     private fun openPanel() {
         val application = app ?: return
+        // WP-28：再次点球 = 收起当前面板（开闭切换）。
+        if (application.overlay.isPanelVisible()) {
+            application.overlay.collapsePanel()
+            return
+        }
         val root = safeRoot() ?: return
         val pkg = root.packageName?.toString()
         if (!isWechatRoot(root, pkg)) return
@@ -485,6 +499,7 @@ open class WeChatReadService : AccessibilityService() {
                     linkedTitle = linkedTitle,
                     profileTags = profile.tags,
                     profileRegion = profile.region,
+                    phone = profile.phones.firstOrNull(),
                 ),
             )
             val title = linkedTitle ?: profile.nickname
@@ -505,6 +520,7 @@ open class WeChatReadService : AccessibilityService() {
                 selfNickname = lastSelfNickname,
                 profileTags = profile.tags,
                 profileRegion = profile.region,
+                contactPhone = profile.phones.firstOrNull(),
                 mode = "open_profile",
             )
             sendOpenReport(report, "profile:" + (profile.wechatId ?: profile.nickname ?: "unknown"), title, "profile")
@@ -519,6 +535,12 @@ open class WeChatReadService : AccessibilityService() {
             )
         } catch (_: Throwable) {
             null
+        }
+        // WP-28：停在微信列表/通讯录等非会话页时，绝不拿残留标题发空请求。
+        if (result == null || result is ExtractResult.NotSingleChat) {
+            Toast.makeText(application, R.string.overlay_need_chat_or_profile, Toast.LENGTH_SHORT).show()
+            application.overlay.updateBadge(FloatingBallBadge.NONE, lastNetworkOk)
+            return
         }
         val title = when (result) {
             is ExtractResult.Success -> result.title

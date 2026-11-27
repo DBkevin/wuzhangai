@@ -94,4 +94,9 @@
     <string name="overlay_operator_none">无运营（自然/美团）</string>
     <string name="overlay_operator_selected_fmt">已选运营：%1$s</string>
     <string name="overlay_operator_meituan_locked">美团 / 大众点评渠道会自动置空运营（防渠道业绩串档）</string>
+
+    <!-- WP-28：本地预占（岚时未建档）警示 -->
+    <string name="overlay_asset_unbound_title">⚠️ 岚时未建档（当前仅微信预占，岚时后台尚无此人）</string>
+    <string name="overlay_asset_unbound_tip">👉 请点开顾客头像进入「详细资料页」，再点悬浮球选择渠道一键建入岚时</string>
+    <string name="overlay_need_chat_or_profile">请先点进顾客单聊页或详细资料页</string>
 </resources>
