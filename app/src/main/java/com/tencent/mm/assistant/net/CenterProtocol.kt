@@ -45,6 +45,10 @@ data class ReadReport(
      * 供中控在双开（主号 + 旧号）场景区分「这台手机现在登的是谁」。
      */
     val selfNickname: String? = null,
+    /** 资料页已展示的标签（WP-26，仅 pageType=profile 时可能非空）。 */
+    val profileTags: List<String> = emptyList(),
+    /** 资料页已展示的地区文本（WP-26）。 */
+    val profileRegion: String? = null,
 ) {
     fun toJson(): String {
         val root = JSONObject()
@@ -63,6 +67,10 @@ data class ReadReport(
         root.put("identity_key", identityKey ?: JSONObject.NULL)
         root.put("wechat_id", wechatId ?: serviceAccountId)
         root.put("self_nickname", selfNickname ?: JSONObject.NULL)
+        val tagArr = JSONArray()
+        profileTags.forEach { tagArr.put(it) }
+        root.put("profile_tags", tagArr)
+        root.put("profile_region", profileRegion ?: JSONObject.NULL)
         return root.toString()
     }
 
@@ -78,6 +86,9 @@ enum class CenterAction(val wireValue: String) {
     SHOW_CANDIDATES("show_candidates"),
     NO_MATCH("no_match"),
     NONE("none"),
+
+    /** WP-26：岚时未建档，悬浮窗渲染「一键选渠道建入岚时」面板。 */
+    PREPARE_HIS_CREATE("prepare_his_create"),
     ;
 
     companion object {
@@ -85,6 +96,27 @@ enum class CenterAction(val wireValue: String) {
             entries.firstOrNull { it.wireValue == value } ?: NONE
     }
 }
+
+/** 待建岚时卡片预览（中控已脱敏）。 */
+data class HisDraft(
+    val customerName: String,
+    val contactWechatId: String?,
+    val wechatMask: String?,
+    val phoneMask: String?,
+    val developerName: String?,
+    val matchedSourceOne: String?,
+    val matchedSourceTwo: String?,
+    val matchedTags: List<String>,
+    val wxAddedAt: String?,
+)
+
+/** 一键建档渠道按钮。 */
+data class ChannelOption(
+    val sourceOne: String,
+    val sourceTwo: String,
+    val label: String,
+    val recommended: Boolean,
+)
 
 data class Candidate(
     val label: String,
@@ -97,6 +129,12 @@ data class CenterResponse(
     val hint: String?,
     val candidates: List<Candidate>,
     val requestId: String?,
+    /** WP-26：待建岚时卡片预览（action=prepare_his_create 时非空）。 */
+    val hisDraft: HisDraft? = null,
+    /** WP-26：一键建档渠道按钮（推荐项排第一）。 */
+    val channelOptions: List<ChannelOption> = emptyList(),
+    /** WP-26：建档成功后中控下发 ` #<档案号>`，安卓自动写入系统剪贴板。 */
+    val autoCopyText: String? = null,
 ) {
     companion object {
         /** 越界防御：候选最多 3 条，避免悬浮窗被超长内容撑爆。 */
@@ -114,9 +152,18 @@ data class CenterResponse(
          */
         private const val MAX_HINT = 2000
 
+        /** 渠道按钮上限（中控已截断到 24，这里再兜一层）。 */
+        private const val MAX_CHANNELS = 24
+
+        /** 识别到的项目标签上限。 */
+        private const val MAX_TAGS = 8
+
+        /** auto_copy_text 上限（` #` + 13 位档案号，留足余量）。 */
+        private const val MAX_COPY_TEXT = 32
+
         fun parse(json: String): CenterResponse? = try {
             val root = JSONObject(json)
-            val action = CenterAction.fromWire(root.optString("action", null))
+            val action = CenterAction.fromWire(root.optString("action", ""))
             val hint = root.optStringOrNull("hint")?.take(MAX_HINT)
             val candidates = ArrayList<Candidate>(MAX_CANDIDATES)
             val arr = root.optJSONArray("candidates")
@@ -141,9 +188,63 @@ data class CenterResponse(
                 hint = hint,
                 candidates = candidates,
                 requestId = root.optStringOrNull("request_id"),
+                hisDraft = parseHisDraft(root.optJSONObject("his_draft")),
+                channelOptions = parseChannelOptions(root.optJSONArray("channel_options")),
+                autoCopyText = root.optStringOrNull("auto_copy_text")?.take(MAX_COPY_TEXT),
             )
         } catch (_: Exception) {
             null
+        }
+
+        private fun parseHisDraft(obj: JSONObject?): HisDraft? {
+            if (obj == null) return null
+            val tags = ArrayList<String>()
+            obj.optJSONArray("matched_tags")?.let { arr ->
+                var i = 0
+                while (i < arr.length() && tags.size < MAX_TAGS) {
+                    val tag = arr.optString(i, "").trim()
+                    if (tag.isNotEmpty()) tags.add(tag.take(MAX_TEXT))
+                    i++
+                }
+            }
+            return HisDraft(
+                customerName = obj.optStringOrNull("customer_name")?.take(MAX_TEXT).orEmpty(),
+                contactWechatId = obj.optStringOrNull("contact_wechat_id")?.take(MAX_TEXT),
+                wechatMask = obj.optStringOrNull("wechat_mask")?.take(MAX_TEXT),
+                phoneMask = obj.optStringOrNull("phone_mask")?.take(MAX_TEXT),
+                developerName = obj.optStringOrNull("developer_name")?.take(MAX_TEXT),
+                matchedSourceOne = obj.optStringOrNull("matched_source_one")?.take(MAX_TEXT),
+                matchedSourceTwo = obj.optStringOrNull("matched_source_two")?.take(MAX_TEXT),
+                matchedTags = tags,
+                wxAddedAt = obj.optStringOrNull("wx_added_at")?.take(MAX_TEXT),
+            )
+        }
+
+        private fun parseChannelOptions(arr: JSONArray?): List<ChannelOption> {
+            if (arr == null) return emptyList()
+            val out = ArrayList<ChannelOption>(MAX_CHANNELS)
+            var i = 0
+            while (i < arr.length() && out.size < MAX_CHANNELS) {
+                val item = arr.optJSONObject(i)
+                if (item != null) {
+                    val one = item.optStringOrNull("source_one")?.take(MAX_TEXT).orEmpty()
+                    val two = item.optStringOrNull("source_two")?.take(MAX_TEXT).orEmpty()
+                    if (one.isNotEmpty()) {
+                        val label = item.optStringOrNull("label")?.take(MAX_TEXT)
+                            ?: if (two.isEmpty()) one else "$one / $two"
+                        out.add(
+                            ChannelOption(
+                                sourceOne = one,
+                                sourceTwo = two,
+                                label = label,
+                                recommended = item.optBoolean("recommended", false),
+                            )
+                        )
+                    }
+                }
+                i++
+            }
+            return out
         }
 
         private fun JSONObject.optStringOrNull(key: String): String? {
@@ -154,7 +255,7 @@ data class CenterResponse(
     }
 }
 
-/** 候选反馈请求体（用户点「确认关联」/「不是同一人」）。 */
+/** 候选反馈请求体（用户点「确认关联」/「不是同一人」/「一键建入岚时」）。 */
 data class CandidateFeedback(
     val requestId: String?,
     val serviceAccountId: String,
@@ -165,6 +266,14 @@ data class CandidateFeedback(
     /** true = 确认关联；false = 不是同一人。 */
     val accepted: Boolean,
     val ts: Long,
+    /** WP-26：`create_his_dossier` 时表示员工点选了渠道并明确要求建入岚时。 */
+    val event: String? = null,
+    val sourceOne: String? = null,
+    val sourceTwo: String? = null,
+    val contactWechatId: String? = null,
+    val profileNickname: String? = null,
+    val profileTags: List<String> = emptyList(),
+    val profileRegion: String? = null,
 ) {
     fun toJson(): String {
         val root = JSONObject()
@@ -177,6 +286,15 @@ data class CandidateFeedback(
         root.put("decision", if (accepted) "confirm" else "reject")
         root.put("accepted", accepted)
         root.put("ts", ts)
+        root.put("event", event ?: JSONObject.NULL)
+        root.put("source_one", sourceOne ?: JSONObject.NULL)
+        root.put("source_two", sourceTwo ?: JSONObject.NULL)
+        root.put("contact_wechat_id", contactWechatId ?: JSONObject.NULL)
+        root.put("profile_nickname", profileNickname ?: JSONObject.NULL)
+        root.put("profile_region", profileRegion ?: JSONObject.NULL)
+        val tagArr = JSONArray()
+        profileTags.forEach { tagArr.put(it) }
+        root.put("profile_tags", tagArr)
         return root.toString()
     }
 }

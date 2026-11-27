@@ -1,5 +1,6 @@
 package com.tencent.mm.assistant
 
+import com.tencent.mm.assistant.core.ProfileInfo
 import com.tencent.mm.assistant.core.ProfilePageReader
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -154,5 +155,44 @@ class ProfilePageReaderTest {
         )
         assertNotNull(info)
         assertNull(info!!.nickname)
+    }
+
+    // ------------------------------------------------------------ WP-26 标签 / 地区
+
+    @Test
+    fun `parses tags on same line and region`() {
+        val texts = listOf(
+            "大宝贝儿",
+            "微信号:  hxzxxy999",
+            "地区:  河南  驻马店",
+            "标签:  美团、双眼皮，超光子",
+            "发消息",
+        )
+        val info = reader.parse(texts)
+        assertNotNull(info)
+        assertEquals(listOf("美团", "双眼皮", "超光子"), info!!.tags)
+        assertEquals("河南  驻马店", info.region)
+    }
+
+    @Test
+    fun `parses tags on next line and filters labels`() {
+        val texts = listOf(
+            "小小林",
+            "微信号:  hxzxxy999",
+            "标签",
+            "医美APP、小红书",
+            "发消息",
+        )
+        val info = reader.parse(texts)
+        assertNotNull(info)
+        assertEquals(listOf("医美APP", "小红书"), info!!.tags)
+        assertNull(info.region)
+    }
+
+    @Test
+    fun `tags and region default to empty for old two-arg profile`() {
+        val info = ProfileInfo("张三", "hxzxxy999")
+        assertTrue(info.tags.isEmpty())
+        assertNull(info.region)
     }
 }

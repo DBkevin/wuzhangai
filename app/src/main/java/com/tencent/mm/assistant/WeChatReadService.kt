@@ -16,6 +16,7 @@ import com.tencent.mm.assistant.core.ReadStatus
 import com.tencent.mm.assistant.core.ReportGate
 import com.tencent.mm.assistant.core.forEachNode
 import com.tencent.mm.assistant.net.ReadReport
+import com.tencent.mm.assistant.overlay.ProfileContext
 
 /**
  * 只读无障碍服务（业务实现）。
@@ -225,6 +226,18 @@ open class WeChatReadService : AccessibilityService() {
         gate.markSent(sessionKey, linkedTitle, messages)
         lastReportedTitle = linkedTitle
 
+        // WP-26：把最近一次资料页上下文（微信号/昵称/标签/地区）交给悬浮窗，
+        // 员工点击「一键建入岚时」渠道按钮时随 /feedback 一并回传。
+        application.overlay.rememberProfileContext(
+            ProfileContext(
+                contactWechatId = wechatId,
+                profileNickname = nickname,
+                linkedTitle = linkedTitle,
+                profileTags = profile.tags,
+                profileRegion = profile.region,
+            ),
+        )
+
         val report = ReadReport(
             serviceAccountId = application.settings.serviceAccountId,
             deviceId = application.settings.deviceId,
@@ -239,8 +252,11 @@ open class WeChatReadService : AccessibilityService() {
             linkedTitle = linkedTitle,
             profileNickname = nickname,
             identityKey = wechatId ?: linkedTitle ?: nickname,
-            wechatId = application.settings.cachedWechatId.ifBlank { wechatId },
+            // WP-26 修复：只使用「我」页缓存的工作号，严禁回退成顾客微信号（否则会把顾客号当员工号上报）。
+            wechatId = application.settings.cachedWechatId.ifBlank { null },
             selfNickname = lastSelfNickname,
+            profileTags = profile.tags,
+            profileRegion = profile.region,
         )
 
         application.logger.readEvent(

@@ -16,6 +16,13 @@ data class ProfileInfo(
     val nickname: String?,
     /** 资料页展示的微信号（可能为空：对方未公开或读取失败）。 */
     val wechatId: String?,
+    /**
+     * 资料页已展示的「标签」（仅读取人工已经打开页面上可见的文本，零点击零输入）。
+     * 用于中控把微信标签映射为岚时项目标签（WP-26）。
+     */
+    val tags: List<String> = emptyList(),
+    /** 资料页已展示的「地区」文本（如「河南  驻马店」）。 */
+    val region: String? = null,
 )
 
 object ProfilePageReader {
@@ -97,7 +104,39 @@ object ProfilePageReader {
                 !looksLikeWechatId(t)
         }
 
-        return ProfileInfo(nickname = nickname, wechatId = wechatId)
+        return ProfileInfo(
+            nickname = nickname,
+            wechatId = wechatId,
+            tags = parseTags(texts),
+            region = parseRegion(texts),
+        )
+    }
+
+    /**
+     * 解析资料页「标签」：兼容同行（`标签: A、B`）与下一行两种布局。
+     * 只读取已展示文本，绝不点击「设置备注和标签」。
+     */
+    private fun parseTags(texts: List<String>): List<String> {
+        val index = texts.indexOfFirst { it == "标签" || it.startsWith("标签:") || it.startsWith("标签：") }
+        if (index < 0) return emptyList()
+        val sameLine = texts[index].removePrefix("标签").trimStart(':', '：', ' ').trim()
+        val raw = when {
+            sameLine.isNotEmpty() -> sameLine
+            index + 1 < texts.size -> texts[index + 1].trim()
+            else -> return emptyList()
+        }
+        if (raw.isEmpty() || ACTION_TEXTS.contains(raw) || LABELS.contains(raw)) return emptyList()
+        return raw.split(',', '，', '、', '/', '|')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && it.length <= MAX_TAG_LEN }
+            .filter { !ACTION_TEXTS.contains(it) && !LABELS.contains(it) }
+            .distinct()
+    }
+
+    private fun parseRegion(texts: List<String>): String? {
+        val line = texts.firstOrNull { it == "地区" || it.startsWith("地区:") || it.startsWith("地区：") } ?: return null
+        val value = line.removePrefix("地区").trimStart(':', '：', ' ').trim()
+        return value.ifEmpty { null }
     }
 
     /** 是否是"字段行"，如 `昵称:  小小林` / `地区:  河南  驻马店`。 */
@@ -126,4 +165,7 @@ object ProfilePageReader {
 
     /** 昵称/备注长度上限：放宽到 64，避免长备注被丢弃。 */
     private const val MAX_NICKNAME_LEN = 64
+
+    /** 单个标签长度上限（过滤异常长文本）。 */
+    private const val MAX_TAG_LEN = 32
 }

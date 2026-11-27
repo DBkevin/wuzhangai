@@ -24,8 +24,21 @@ import com.tencent.mm.assistant.net.CandidateFeedback
 import com.tencent.mm.assistant.net.CenterAction
 import com.tencent.mm.assistant.net.CenterClient
 import com.tencent.mm.assistant.net.CenterResponse
+import com.tencent.mm.assistant.net.ChannelOption
 import com.tencent.mm.assistant.util.SafeLogger
 import com.tencent.mm.assistant.util.SettingsStore
+
+/**
+ * 最近一次资料页上下文（WP-26）：员工点「一键建入岚时」渠道按钮时随 /feedback 回传。
+ * 只保存当前已打开资料页上人工可见的信息，不做任何后台遍历。
+ */
+data class ProfileContext(
+    val contactWechatId: String?,
+    val profileNickname: String?,
+    val linkedTitle: String?,
+    val profileTags: List<String>,
+    val profileRegion: String?,
+)
 
 /**
  * 悬浮窗管理。
@@ -58,6 +71,14 @@ class HintOverlayManager(
     private var lastResponse: CenterResponse? = null
     private var lastTitle: String? = null
 
+    /** 最近一次资料页上下文（微信号/昵称/标签/地区），供一键建档回传。 */
+    private var profileContext: ProfileContext? = null
+
+    /** 记录最近一次资料页上下文（由 WeChatReadService 在人工打开资料页时调用）。 */
+    fun rememberProfileContext(context: ProfileContext) {
+        mainHandler.post { profileContext = context }
+    }
+
     // ---------------------------------------------------------------- 展示
 
     fun show(response: CenterResponse, sessionKey: String, title: String?) {
@@ -79,6 +100,15 @@ class HintOverlayManager(
         }
 
         removeInternal()
+
+        // WP-26：在岚时建档成功后，中控下发 ` #<档案号>`，这里自动写入系统剪贴板，
+        // 员工退回微信点备注即可直接粘贴（粘贴仍由人工完成，App 绝不触发）。
+        response.autoCopyText?.trim()?.takeIf { it.isNotEmpty() }?.let { text ->
+            copyToClipboard(
+                text,
+                appContext.getString(R.string.overlay_copied_remark_code_fmt, text.trim()),
+            )
+        }
 
         val metrics = appContext.resources.displayMetrics
         val panelHeight = (metrics.heightPixels * HEIGHT_RATIO).toInt()
@@ -166,6 +196,25 @@ class HintOverlayManager(
             titleView(titleFor(response)),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
+        // WP-26：顶栏固定显示两个独立复制按钮（仅当提示里含 `#档案号`）。
+        HintCopyHelper.extractDossierNo(response.hint)?.let { dossierNo ->
+            header.addView(
+                smallButton(appContext.getString(R.string.overlay_btn_copy_dossier_no)) {
+                    copyToClipboard(
+                        dossierNo,
+                        appContext.getString(R.string.overlay_copied_dossier_no_fmt, dossierNo),
+                    )
+                },
+            )
+            header.addView(
+                smallButton(appContext.getString(R.string.overlay_btn_copy_remark_code)) {
+                    copyToClipboard(
+                        " #$dossierNo",
+                        appContext.getString(R.string.overlay_copied_remark_code_fmt, " #$dossierNo"),
+                    )
+                },
+            )
+        }
         header.addView(smallButton(appContext.getString(R.string.overlay_btn_close)) { dismiss() })
         root.addView(header)
 
@@ -173,14 +222,20 @@ class HintOverlayManager(
         val list = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
         when (response.action) {
             CenterAction.SHOW_HINT -> {
-                // 提示按行拆成"一条条"，每条右侧一个复制按钮
+                // 提示按行拆成"一条条"：话术行只复制剥离前缀后的正文，状态行不渲染复制按钮。
                 val hint = response.hint ?: appContext.getString(R.string.overlay_empty_hint)
                 val items = hint.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
                 if (items.isEmpty()) {
-                    list.addView(rowView(hint))
+                    list.addView(rowView(hint, HintCopyHelper.copyableRowText(hint)))
                 } else {
-                    items.forEach { list.addView(rowView(it)) }
+                    items.forEach { line ->
+                        list.addView(rowView(line, HintCopyHelper.copyableRowText(line)))
+                    }
                 }
+            }
+
+            CenterAction.PREPARE_HIS_CREATE -> {
+                list.addView(prepareHisCreatePanel(response))
             }
 
             CenterAction.SHOW_CANDIDATES -> {
@@ -227,19 +282,23 @@ class HintOverlayManager(
         CenterAction.SHOW_HINT -> appContext.getString(R.string.overlay_title_hint)
         CenterAction.SHOW_CANDIDATES -> appContext.getString(R.string.overlay_title_candidates)
         CenterAction.NO_MATCH -> appContext.getString(R.string.overlay_title_no_match)
+        CenterAction.PREPARE_HIS_CREATE -> appContext.getString(R.string.overlay_title_prepare_his)
         CenterAction.NONE -> ""
     }
 
-    /** 一条文本 + 右侧「复制」按钮。整行也可点击复制（双通道，兼容不同 ROM 的触摸行为）。 */
-    private fun rowView(text: String): View {
+    /**
+     * 一条文本 + 右侧「复制」按钮。
+     * [copyText] 为 null 时表示状态行（归属/资产/来源等），不渲染复制按钮、整行不可点。
+     */
+    private fun rowView(text: String, copyText: String? = text): View {
         val row = LinearLayout(appContext).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(4), 0, dp(4))
-            isClickable = true
-            setOnClickListener {
-                copyToClipboard(text)
-            }
+        }
+        if (copyText != null) {
+            row.isClickable = true
+            row.setOnClickListener { copyToClipboard(copyText) }
         }
         val content = TextView(appContext).apply {
             this.text = text
@@ -251,7 +310,9 @@ class HintOverlayManager(
             content,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
-        row.addView(copyButton(text))
+        if (copyText != null) {
+            row.addView(copyButton(copyText))
+        }
         return row
     }
 
@@ -305,6 +366,135 @@ class HintOverlayManager(
         return wrap
     }
 
+    /**
+     * 「待建岚时」面板（WP-26）：
+     *   * 顶部紧凑预览（姓名/备注、脱敏微信号、开发人、识别到的项目标签）；
+     *   * 预匹配渠道渲染为醒目绿色主按钮「✅ 立即建入岚时【医美APP / 美团】」；
+     *   * 其余常用渠道每行 2 个紧凑胶囊按钮，点任一渠道即按该渠道建档。
+     * 点击后按钮立即变为「建档中...」并禁用，防止连点重复建档。
+     */
+    private fun prepareHisCreatePanel(response: CenterResponse): View {
+        val wrap = LinearLayout(appContext).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(4), 0, dp(6))
+        }
+        val draft = response.hisDraft
+        val preview = StringBuilder()
+        preview.append("姓名/备注：").append(draft?.customerName?.takeIf { it.isNotBlank() } ?: "-")
+        draft?.wechatMask?.takeIf { it.isNotBlank() }?.let { preview.append("\n微信号：").append(it) }
+        draft?.phoneMask?.takeIf { it.isNotBlank() }?.let { preview.append("\n手机号：").append(it) }
+        draft?.developerName?.takeIf { it.isNotBlank() }?.let { preview.append("\n开发人：").append(it) }
+        draft?.wxAddedAt?.takeIf { it.isNotBlank() }?.let { preview.append("\n微信首加：").append(it) }
+        if (!draft?.matchedTags.isNullOrEmpty()) {
+            preview.append("\n识别项目：").append(draft!!.matchedTags.joinToString("、"))
+        }
+        if (!draft?.matchedSourceOne.isNullOrBlank()) {
+            preview.append("\n预匹配渠道：").append(draft!!.matchedSourceOne)
+            draft.matchedSourceTwo?.takeIf { it.isNotBlank() }?.let { preview.append(" / ").append(it) }
+        }
+        wrap.addView(
+            TextView(appContext).apply {
+                text = preview.toString()
+                setTextColor(0xFFE8E8E8.toInt())
+                textSize = 13f
+                setPadding(0, 0, 0, dp(6))
+            },
+        )
+
+        val options = response.channelOptions
+        if (options.isEmpty()) {
+            wrap.addView(
+                TextView(appContext).apply {
+                    text = appContext.getString(R.string.overlay_prepare_empty)
+                    setTextColor(0xFFFFB74D.toInt())
+                    textSize = 12f
+                },
+            )
+            return wrap
+        }
+
+        val primary = options.firstOrNull { it.recommended } ?: options.first()
+        val primaryButton = Button(appContext).apply {
+            text = appContext.getString(R.string.overlay_btn_create_his_fmt, primary.label)
+            textSize = 13f
+            isAllCaps = false
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            setTextColor(Color.WHITE)
+            setBackgroundColor(0xFF2E7D32.toInt())
+            setOnClickListener {
+                isEnabled = false
+                text = appContext.getString(R.string.overlay_btn_creating_his)
+                sendCreateFeedback(response, primary, options.indexOf(primary))
+            }
+        }
+        wrap.addView(
+            primaryButton,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+
+        // 其余渠道：每行 2 个紧凑按钮。
+        val rest = options.filter { it != primary }
+        var index = 0
+        while (index < rest.size) {
+            val row = LinearLayout(appContext).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(3), 0, 0)
+            }
+            for (slot in 0..1) {
+                val position = index + slot
+                if (position >= rest.size) {
+                    row.addView(View(appContext), LinearLayout.LayoutParams(0, 1, 1f))
+                    continue
+                }
+                val channel = rest[position]
+                val button = Button(appContext).apply {
+                    text = channel.label
+                    textSize = 11f
+                    isAllCaps = false
+                    minWidth = 0
+                    minimumWidth = 0
+                    setPadding(dp(4), dp(2), dp(4), dp(2))
+                    setOnClickListener {
+                        isEnabled = false
+                        text = appContext.getString(R.string.overlay_btn_creating_his)
+                        sendCreateFeedback(response, channel, options.indexOf(channel))
+                    }
+                }
+                row.addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            wrap.addView(row)
+            index += 2
+        }
+        return wrap
+    }
+
+    /** 员工点选渠道后发送建档反馈（唯一会触发岚时建档的入口）。 */
+    private fun sendCreateFeedback(response: CenterResponse, channel: ChannelOption, index: Int) {
+        val context = profileContext
+        val draft = response.hisDraft
+        val feedback = CandidateFeedback(
+            requestId = response.requestId,
+            serviceAccountId = settings.serviceAccountId,
+            deviceId = settings.deviceId,
+            title = lastTitle,
+            label = channel.label,
+            candidateIndex = index,
+            accepted = true,
+            ts = System.currentTimeMillis(),
+            event = "create_his_dossier",
+            sourceOne = channel.sourceOne,
+            sourceTwo = channel.sourceTwo,
+            contactWechatId = context?.contactWechatId ?: draft?.contactWechatId,
+            profileNickname = context?.profileNickname ?: draft?.customerName,
+            profileTags = context?.profileTags ?: draft?.matchedTags ?: emptyList(),
+            profileRegion = context?.profileRegion,
+        )
+        centerClient.feedback(feedback)
+    }
+
+
     private fun copyButton(text: String): Button =
         Button(appContext).apply {
             this.text = appContext.getString(R.string.overlay_btn_copy)
@@ -346,7 +536,7 @@ class HintOverlayManager(
      * 只写剪贴板，不向任何应用注入输入事件，也不触发粘贴。
      * 粘贴永远由人工完成。
      */
-    private fun copyToClipboard(text: String) {
+    private fun copyToClipboard(text: String, toastMessage: String? = null) {
         try {
             val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             if (cm == null) {
@@ -354,7 +544,11 @@ class HintOverlayManager(
                 return
             }
             cm.setPrimaryClip(ClipData.newPlainText("kf_hint", text))
-            Toast.makeText(appContext, R.string.overlay_copied, Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                appContext,
+                toastMessage ?: appContext.getString(R.string.overlay_copied),
+                Toast.LENGTH_SHORT,
+            ).show()
             logger.event("overlay_copied")
         } catch (_: Throwable) {
             logger.event("clipboard_failed")
