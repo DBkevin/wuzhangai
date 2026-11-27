@@ -70,4 +70,28 @@
     <string name="overlay_btn_copy_remark_code">复制#备注码</string>
     <string name="overlay_copied_dossier_no_fmt">已复制档案号：%1$s</string>
     <string name="overlay_copied_remark_code_fmt">已复制备注码：%1$s</string>
+
+    <!-- WP-27：苹果式悬浮球 + 二级菜单 -->
+    <string name="overlay_btn_collapse">收起</string>
+    <string name="overlay_tab_asset">📋 档案与资产</string>
+    <string name="overlay_tab_phone">📱 补录手机号</string>
+    <string name="overlay_tab_script">💬 跟进话术</string>
+    <string name="overlay_seat_fmt">%1$s[%2$s]</string>
+    <string name="overlay_asset_no_fmt">岚时档案号：%1$s</string>
+    <string name="overlay_asset_name_fmt">姓名：%1$s</string>
+    <string name="overlay_asset_vip_fmt">会员等级：%1$s</string>
+    <string name="overlay_asset_seats_fmt">归属：%1$s</string>
+    <string name="overlay_asset_points_fmt">可用积分：%1$s · 可用订金：%2$s</string>
+    <string name="overlay_asset_phone_fmt">手机号：%1$s</string>
+    <string name="overlay_asset_visit_fmt">最近到院：%1$s</string>
+    <string name="overlay_asset_no_archive">尚未关联岚时档案：请先点开对方微信头像进入资料页，再点悬浮球一键建入岚时</string>
+    <string name="overlay_phone_none">未识别到可补录的手机号（需顾客在聊天中发出 11 位手机号）</string>
+    <string name="overlay_phone_conflict_tip">写入前会自动查重；若该号码已挂在其他老档案上会立即拦截</string>
+    <string name="overlay_btn_supplement_main_fmt">一键写入岚时主手机号 %1$s</string>
+    <string name="overlay_btn_supplement_spare_fmt">一键存为岚时备用手机号 %1$s</string>
+    <string name="overlay_btn_submitting">提交中...</string>
+    <string name="overlay_operator_title">引流运营（写入岚时所属客服）</string>
+    <string name="overlay_operator_none">无运营（自然/美团）</string>
+    <string name="overlay_operator_selected_fmt">已选运营：%1$s</string>
+    <string name="overlay_operator_meituan_locked">美团 / 大众点评渠道会自动置空运营（防渠道业绩串档）</string>
 </resources>

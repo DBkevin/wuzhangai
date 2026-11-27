@@ -103,6 +103,23 @@ class SettingsStore(context: Context) {
             .putInt(KEY_OVERLAY_OPACITY, value.coerceIn(MIN_OPACITY, MAX_OPACITY))
             .apply()
 
+    // ------------------------------------------------------------ WP-27 悬浮球记忆（零聊天隐私）
+
+    /** 悬浮球停靠的 Y 坐标（px）；-1 表示尚未拖动过，使用默认 35% 高度。 */
+    var floatingBallY: Int
+        get() = prefs.getInt(KEY_FLOATING_BALL_Y, -1)
+        set(value) = prefs.edit().putInt(KEY_FLOATING_BALL_Y, value).apply()
+
+    /** 上次所选渠道（`sourceOne\u0001sourceTwo`，只记渠道名，不含任何聊天内容）。 */
+    var lastChannelRaw: String
+        get() = prefs.getString(KEY_LAST_CHANNEL, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_LAST_CHANNEL, value).apply()
+
+    /** 上次所选引流运营（`id\u0001name`，id 可为空表示无运营）。 */
+    var lastOperatorRaw: String
+        get() = prefs.getString(KEY_LAST_OPERATOR, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_LAST_OPERATOR, value).apply()
+
     // ------------------------------------------------------------ device_id
 
     /**
@@ -138,6 +155,9 @@ class SettingsStore(context: Context) {
         private const val KEY_LOCAL_LOG = "local_log_enabled"
         private const val KEY_PROFILE_READ = "profile_read_enabled"
         private const val KEY_OVERLAY_OPACITY = "overlay_opacity_percent"
+        private const val KEY_FLOATING_BALL_Y = "floating_ball_y"
+        private const val KEY_LAST_CHANNEL = "last_channel_choice"
+        private const val KEY_LAST_OPERATOR = "last_operator_choice"
 
         /** 悬浮窗不透明度默认值（百分比）。65% 兼顾可读性与"能看清背后微信"的需求。 */
         const val DEFAULT_OPACITY = 65
@@ -168,5 +188,44 @@ class SettingsStore(context: Context) {
                 ""
             }
         }
+    }
+}
+
+/**
+ * 上次所选渠道 / 引流运营的纯函数编解码（WP-27），便于 JVM 单测。
+ *
+ * 只保存渠道与运营名称，**绝不**保存聊天内容、会话标题或对方微信号明文（本地零隐私落盘铁律）。
+ */
+object LastChoiceMemory {
+    private const val SEP = "\u0001"
+
+    data class Channel(val sourceOne: String, val sourceTwo: String)
+
+    data class Operator(val id: String, val name: String)
+
+    fun encodeChannel(sourceOne: String, sourceTwo: String): String =
+        sourceOne.trim() + SEP + sourceTwo.trim()
+
+    fun decodeChannel(raw: String?): Channel? {
+        val parts = split(raw) ?: return null
+        if (parts[0].isEmpty()) return null
+        return Channel(parts[0], parts[1])
+    }
+
+    fun encodeOperator(id: String?, name: String?): String =
+        (id?.trim().orEmpty()) + SEP + (name?.trim().orEmpty())
+
+    fun decodeOperator(raw: String?): Operator? {
+        val parts = split(raw) ?: return null
+        if (parts[1].isEmpty()) return null
+        return Operator(parts[0], parts[1])
+    }
+
+    private fun split(raw: String?): List<String>? {
+        val text = raw?.trim().orEmpty()
+        if (text.isEmpty()) return null
+        val parts = text.split(SEP)
+        if (parts.size != 2) return null
+        return parts
     }
 }

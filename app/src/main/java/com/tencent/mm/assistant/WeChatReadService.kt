@@ -49,6 +49,19 @@ open class WeChatReadService : AccessibilityService() {
     /** 当前已上报过的会话标题，用于判断"标题是否变化"以突破 5 秒节流。 */
     private var lastReportedTitle: String? = null
 
+    // ---- WP-27：轻量 peek / 主动展开面板的本地上下文（全部只在内存，离开微信即清空） ----
+    /** peek 去重签名：页型|身份|识别到的手机号。 */
+    private var lastPeekSignature: String? = null
+    private var lastNetworkOk = true
+    private var lastProfileInfo: ProfileInfo? = null
+    private var lastProfileLinkedTitle: String? = null
+    private var lastChatTitle: String? = null
+    private var lastChatMessages: List<String> = emptyList()
+    private var lastChatReadStatus: ReadStatus = ReadStatus.PARTIAL
+    private var lastChatSessionKey: String = ""
+    private var lastChatWechatId: String? = null
+    private val phoneRegex = Regex("""(?<!\d)(1[3-9]\d{9})(?!\d)""")
+
     /** 上一次成功读取到的微信号，避免重复扫描「我」页。 */
     private var wechatIdScanDone = false
     /** 最近一次读到的本人（员工）昵称，供上报携带 self_nickname（docs/04 §2.2）。 */
@@ -93,6 +106,8 @@ open class WeChatReadService : AccessibilityService() {
         app = AssistantApp.from(this)
         android.util.Log.i("KfReadOnly", "RAW app=" + (app != null))
         app?.logger?.event("service_connected")
+        // WP-27：员工点击悬浮球时，按当前页（资料页/单聊）发起一次 open 请求并展开面板。
+        app?.overlay?.setOnBallClick { openPanel() }
         // 前台服务保活：避免 MIUI/HyperOS 冻结本进程导致轮询停止
         KeepAliveService.start(this)
         startPolling()
@@ -108,6 +123,7 @@ open class WeChatReadService : AccessibilityService() {
         polling = false
         mainHandler.removeCallbacks(pollTask)
         cancelPending()
+        app?.overlay?.hideAll()
         gate.reset()
         app?.overlay?.dismiss()
         KeepAliveService.stop(this)
@@ -141,16 +157,22 @@ open class WeChatReadService : AccessibilityService() {
         android.util.Log.i("KfReadOnly", "POLL root pkg=" + (pkg ?: "NULL"))
 
         if (!isWechatRoot(root, pkg)) {
-            // 非微信前台：清空当前会话内存缓存并收起悬浮窗，绝不采集其他应用内容。
-            if (gate.activeSessionKey != null) {
-                gate.reset()
-                lastReportedTitle = null
-                application.overlay.dismiss()
-            }
+            // 非微信前台：立即清空内存快照、收起面板与悬浮球（本地零隐私残留）。
+            gate.reset()
+            lastReportedTitle = null
+            lastPeekSignature = null
+            lastProfileInfo = null
+            lastProfileLinkedTitle = null
+            lastChatTitle = null
+            lastChatMessages = emptyList()
+            lastChatWechatId = null
+            application.overlay.hideAll()
             return
         }
 
         lastRoot = root
+        // 微信前台常驻悬浮球（含健康指示灯）。
+        application.overlay.showBall(lastNetworkOk)
 
         // 双开防串号（docs/04 §2.2）：每轮轮询都允许重新读取工作号与本人昵称，
         // 不再「扫到一次就永久锁死」，切换账号后能及时刷新。
@@ -189,19 +211,15 @@ open class WeChatReadService : AccessibilityService() {
         val wechatId = profile.wechatId
         val nickname = profile.nickname
 
-        // 时间邻接：只有刚从单聊进入资料页时才做绑定，避免隔了很久误绑
+        // 时间邻接：只有刚从单聊进入资料页时才做绑定，避免隔了很久误绑。
         val linkedTitle = application.profileLinker.sourceTitleFor(System.currentTimeMillis())
-
-        // 学到绑定关系，供后续会话上报直接带上微信号
         if (linkedTitle != null && !wechatId.isNullOrBlank()) {
             application.wechatIdByTitle[linkedTitle] = wechatId
         }
 
-        val sessionKey = "profile:" + (wechatId ?: nickname ?: "unknown")
-        if (gate.onSessionChanged(sessionKey)) application.overlay.dismiss()
-
-        val titleChanged = lastReportedTitle != linkedTitle || gate.activeSessionKey != sessionKey
-        val messages = emptyList<String>()
+        lastProfileInfo = profile
+        lastProfileLinkedTitle = linkedTitle
+        lastChatWechatId = wechatId
 
         application.logger.event(
             "profile id_len=" + (wechatId?.length ?: -1) +
@@ -209,25 +227,7 @@ open class WeChatReadService : AccessibilityService() {
                 " linked=" + (linkedTitle != null),
         )
 
-        when (gate.shouldSend(sessionKey, linkedTitle, messages, titleChanged)) {
-            is ReportGate.Decision.SkipUnchanged -> {
-                application.logger.skipped("profile_unchanged")
-                return
-            }
-
-            is ReportGate.Decision.SkipThrottled -> {
-                application.logger.skipped("profile_throttled")
-                return
-            }
-
-            is ReportGate.Decision.Send -> Unit
-        }
-
-        gate.markSent(sessionKey, linkedTitle, messages)
-        lastReportedTitle = linkedTitle
-
-        // WP-26：把最近一次资料页上下文（微信号/昵称/标签/地区）交给悬浮窗，
-        // 员工点击「一键建入岚时」渠道按钮时随 /feedback 一并回传。
+        // WP-26/27：把资料页上下文交给悬浮窗，员工点「一键建入岚时」时随 feedback 回传。
         application.overlay.rememberProfileContext(
             ProfileContext(
                 contactWechatId = wechatId,
@@ -238,42 +238,17 @@ open class WeChatReadService : AccessibilityService() {
             ),
         )
 
-        val report = ReadReport(
-            serviceAccountId = application.settings.serviceAccountId,
-            deviceId = application.settings.deviceId,
-            // title 用"来源会话标题"，中控据此把微信号挂到该会话上
-            title = linkedTitle ?: nickname,
-            recentMessages = messages,
-            readStatus = if (wechatId != null) ReadStatus.FULL.wireValue else ReadStatus.PARTIAL.wireValue,
-            ts = System.currentTimeMillis(),
-            sessionKey = sessionKey,
+        // WP-27：资料页只发轻量 peek（不自动展开大面板）。
+        peekIfNeeded(
             pageType = ReadReport.PAGE_PROFILE,
-            contactWechatId = wechatId,
+            title = linkedTitle ?: nickname,
+            wechatId = wechatId,
+            messages = emptyList(),
+            readStatus = if (wechatId != null) ReadStatus.FULL else ReadStatus.PARTIAL,
+            sessionKey = "profile:" + (wechatId ?: nickname ?: "unknown"),
+            profile = profile,
             linkedTitle = linkedTitle,
-            profileNickname = nickname,
-            identityKey = wechatId ?: linkedTitle ?: nickname,
-            // WP-26 修复：只使用「我」页缓存的工作号，严禁回退成顾客微信号（否则会把顾客号当员工号上报）。
-            wechatId = application.settings.cachedWechatId.ifBlank { null },
-            selfNickname = lastSelfNickname,
-            profileTags = profile.tags,
-            profileRegion = profile.region,
         )
-
-        application.logger.readEvent(
-            packageName = ChatScreenDetector.WECHAT_PACKAGE,
-            readStatus = report.readStatus,
-        )
-
-        application.centerClient.report(report) { response ->
-            mainHandler.post {
-                if (response == null) return@post
-                application.overlay.show(
-                    response = response,
-                    sessionKey = sessionKey,
-                    title = linkedTitle ?: nickname,
-                )
-            }
-        }
     }
 
     /**
@@ -387,86 +362,182 @@ open class WeChatReadService : AccessibilityService() {
 
         when (result) {
             is ExtractResult.NotSingleChat -> {
-                // 群聊 / 公众号 / 服务号 / 朋友圈 / 聊天列表：不上报，并清空该会话缓存。
-                if (gate.activeSessionKey != null) {
-                    gate.reset()
-                    lastReportedTitle = null
-                    application.overlay.dismiss()
-                }
+                // 群聊 / 公众号 / 服务号 / 朋友圈 / 聊天列表：不采集，清空会话上下文（悬浮球保留）。
+                lastProfileInfo = null
+                lastChatTitle = null
+                lastChatMessages = emptyList()
+                lastChatWechatId = null
+                lastPeekSignature = null
+                application.overlay.showBall(lastNetworkOk)
             }
 
-            is ExtractResult.TitleUnreadable -> {
-                // 标题读不到 -> title=null + read_status=partial（不抛异常、不循环重试）。
-                if (gate.onSessionChanged(result.sessionKey)) application.overlay.dismiss()
-                dispatch(
-                    title = null,
-                    messages = result.recentMessages,
-                    readStatus = ReadStatus.PARTIAL,
-                    sessionKey = result.sessionKey,
-                )
-            }
+            is ExtractResult.TitleUnreadable ->
+                applyChat(null, result.recentMessages, ReadStatus.PARTIAL, result.sessionKey)
 
-            is ExtractResult.MessagesObfuscated -> {
-                // 消息节点被混淆 -> 只回传标题 + read_status=partial。
-                if (gate.onSessionChanged(result.sessionKey)) application.overlay.dismiss()
-                dispatch(
-                    title = result.title,
-                    messages = emptyList(),
-                    readStatus = ReadStatus.PARTIAL,
-                    sessionKey = result.sessionKey,
-                )
-            }
+            is ExtractResult.MessagesObfuscated ->
+                applyChat(result.title, emptyList(), ReadStatus.PARTIAL, result.sessionKey)
 
-            is ExtractResult.Success -> {
-                if (gate.onSessionChanged(result.sessionKey)) application.overlay.dismiss()
-                dispatch(
-                    title = result.title,
-                    messages = result.recentMessages,
-                    readStatus = ReadStatus.FULL,
-                    sessionKey = result.sessionKey,
-                )
-            }
+            is ExtractResult.Success ->
+                applyChat(result.title, result.recentMessages, ReadStatus.FULL, result.sessionKey)
         }
     }
 
-    private fun dispatch(
+    private fun applyChat(
         title: String?,
         messages: List<String>,
         readStatus: ReadStatus,
         sessionKey: String,
     ) {
         val application = app ?: return
-        val titleChanged = lastReportedTitle != title || gate.activeSessionKey != sessionKey
-
-        when (gate.shouldSend(sessionKey, title, messages, titleChanged)) {
-            is ReportGate.Decision.SkipUnchanged -> {
-                application.logger.skipped("unchanged")
-                return
-            }
-
-            is ReportGate.Decision.SkipThrottled -> {
-                application.logger.skipped("throttled")
-                return
-            }
-
-            is ReportGate.Decision.Send -> Unit
-        }
-
-        gate.markSent(sessionKey, title, messages)
-        lastReportedTitle = title
-
-        // 记录"最近一次单聊"，供资料页做来源绑定
+        lastProfileInfo = null
+        lastChatTitle = title
+        lastChatMessages = messages
+        lastChatReadStatus = readStatus
+        lastChatSessionKey = sessionKey
+        val knownWechatId = title?.let { application.wechatIdByTitle[it] }
+        lastChatWechatId = knownWechatId
         if (title != null) {
+            // 记录"最近一次单聊"，供资料页做来源绑定。
             application.profileLinker.onChatSeen(title, System.currentTimeMillis())
         }
+        lastReportedTitle = title
+        peekIfNeeded(ReadReport.PAGE_CHAT, title, knownWechatId, messages, readStatus, sessionKey, null, null)
+    }
 
-        application.logger.readEvent(
-            packageName = ChatScreenDetector.WECHAT_PACKAGE,
+    /**
+     * WP-27 轻量 peek：仅在「会话/资料页切换」或「首次识别出 11 位手机号」时各发 1 次，
+     * 只更新悬浮球角标，绝不自动展开面板遮挡聊天界面。
+     */
+    private fun peekIfNeeded(
+        pageType: String,
+        title: String?,
+        wechatId: String?,
+        messages: List<String>,
+        readStatus: ReadStatus,
+        sessionKey: String,
+        profile: ProfileInfo?,
+        linkedTitle: String?,
+    ) {
+        val application = app ?: return
+        val phone = extractPhone(listOfNotNull(title, linkedTitle, profile?.nickname) + messages)
+        val signature = pageType + "|" + (wechatId ?: title ?: "") + "|" + phone
+        if (signature == lastPeekSignature) return
+        lastPeekSignature = signature
+
+        val report = ReadReport(
+            serviceAccountId = application.settings.serviceAccountId,
+            deviceId = application.settings.deviceId,
+            title = title,
+            // 轻量：只为角标判定携带识别到的手机号，不回传聊天原文。
+            recentMessages = if (phone.isNotEmpty()) listOf("手机号 $phone") else emptyList(),
             readStatus = readStatus.wireValue,
+            ts = System.currentTimeMillis(),
+            sessionKey = sessionKey,
+            pageType = pageType,
+            contactWechatId = wechatId,
+            linkedTitle = linkedTitle,
+            profileNickname = profile?.nickname,
+            identityKey = wechatId ?: title ?: profile?.nickname,
+            wechatId = application.settings.cachedWechatId.ifBlank { null },
+            selfNickname = lastSelfNickname,
+            profileTags = profile?.tags ?: emptyList(),
+            profileRegion = profile?.region,
+            mode = "peek",
         )
+        application.centerClient.report(report) { response ->
+            mainHandler.post {
+                lastNetworkOk = response != null
+                application.overlay.showBall(lastNetworkOk)
+                application.overlay.updateBadge(response?.badge, lastNetworkOk)
+            }
+        }
+    }
 
-        val knownWechatId = title?.let { application.wechatIdByTitle[it] }
+    /** 员工主动点击悬浮球：按当前页发一次完整 open 请求并展开场景化二级面板。 */
+    private fun openPanel() {
+        val application = app ?: return
+        val root = safeRoot() ?: return
+        val pkg = root.packageName?.toString()
+        if (!isWechatRoot(root, pkg)) return
+        lastRoot = root
 
+        val profile = if (application.settings.profileReadEnabled) {
+            try {
+                ProfilePageReader.find(AccessibilityNodeTree(root))
+            } catch (_: Throwable) {
+                null
+            }
+        } else {
+            null
+        }
+
+        if (profile != null) {
+            val linkedTitle = application.profileLinker.sourceTitleFor(System.currentTimeMillis())
+            if (linkedTitle != null && !profile.wechatId.isNullOrBlank()) {
+                application.wechatIdByTitle[linkedTitle] = profile.wechatId
+            }
+            lastProfileInfo = profile
+            lastProfileLinkedTitle = linkedTitle
+            application.overlay.rememberProfileContext(
+                ProfileContext(
+                    contactWechatId = profile.wechatId,
+                    profileNickname = profile.nickname,
+                    linkedTitle = linkedTitle,
+                    profileTags = profile.tags,
+                    profileRegion = profile.region,
+                ),
+            )
+            val title = linkedTitle ?: profile.nickname
+            val report = ReadReport(
+                serviceAccountId = application.settings.serviceAccountId,
+                deviceId = application.settings.deviceId,
+                title = title,
+                recentMessages = emptyList(),
+                readStatus = if (profile.wechatId != null) ReadStatus.FULL.wireValue else ReadStatus.PARTIAL.wireValue,
+                ts = System.currentTimeMillis(),
+                sessionKey = "profile:" + (profile.wechatId ?: profile.nickname ?: "unknown"),
+                pageType = ReadReport.PAGE_PROFILE,
+                contactWechatId = profile.wechatId,
+                linkedTitle = linkedTitle,
+                profileNickname = profile.nickname,
+                identityKey = profile.wechatId ?: linkedTitle ?: profile.nickname,
+                wechatId = application.settings.cachedWechatId.ifBlank { null },
+                selfNickname = lastSelfNickname,
+                profileTags = profile.tags,
+                profileRegion = profile.region,
+                mode = "open_profile",
+            )
+            sendOpenReport(report, "profile:" + (profile.wechatId ?: profile.nickname ?: "unknown"), title, "profile")
+            return
+        }
+
+        val result = try {
+            ChatScreenDetector.detect(
+                AccessibilityNodeTree(root),
+                currentScreenRect(),
+                application.settings.maxMessages,
+            )
+        } catch (_: Throwable) {
+            null
+        }
+        val title = when (result) {
+            is ExtractResult.Success -> result.title
+            is ExtractResult.MessagesObfuscated -> result.title
+            else -> lastChatTitle
+        }
+        val messages = when (result) {
+            is ExtractResult.Success -> result.recentMessages
+            is ExtractResult.TitleUnreadable -> result.recentMessages
+            else -> lastChatMessages
+        }
+        val readStatus = if (result is ExtractResult.Success) ReadStatus.FULL else lastChatReadStatus
+        val sessionKey = when (result) {
+            is ExtractResult.Success -> result.sessionKey
+            is ExtractResult.TitleUnreadable -> result.sessionKey
+            is ExtractResult.MessagesObfuscated -> result.sessionKey
+            else -> lastChatSessionKey
+        }
+        val knownWechatId = title?.let { application.wechatIdByTitle[it] } ?: lastChatWechatId
         val report = ReadReport(
             serviceAccountId = application.settings.serviceAccountId,
             deviceId = application.settings.deviceId,
@@ -480,19 +551,31 @@ open class WeChatReadService : AccessibilityService() {
             identityKey = knownWechatId ?: title,
             wechatId = application.settings.cachedWechatId.ifBlank { null },
             selfNickname = lastSelfNickname,
+            mode = "open_chat",
         )
+        sendOpenReport(report, sessionKey, title, "chat")
+    }
 
+    private fun sendOpenReport(report: ReadReport, sessionKey: String, title: String?, pageType: String) {
+        val application = app ?: return
         application.centerClient.report(report) { response ->
-            // 回调在 IO 线程，切回主线程再展示。
             mainHandler.post {
-                if (response == null) return@post
-                application.overlay.show(
-                    response = response,
-                    sessionKey = sessionKey,
-                    title = title,
-                )
+                lastNetworkOk = response != null
+                if (response == null) {
+                    application.overlay.showBall(false)
+                    return@post
+                }
+                application.overlay.expandPanel(response, sessionKey, title, pageType)
+                application.overlay.updateBadge(response.badge, true)
             }
         }
+    }
+
+    private fun extractPhone(texts: Iterable<String>): String {
+        for (text in texts) {
+            phoneRegex.find(text)?.let { return it.groupValues[1] }
+        }
+        return ""
     }
 
     // ---------------------------------------------------------------- 微信「我」页

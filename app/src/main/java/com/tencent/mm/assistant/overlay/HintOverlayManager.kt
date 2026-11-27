@@ -25,6 +25,8 @@ import com.tencent.mm.assistant.net.CenterAction
 import com.tencent.mm.assistant.net.CenterClient
 import com.tencent.mm.assistant.net.CenterResponse
 import com.tencent.mm.assistant.net.ChannelOption
+import com.tencent.mm.assistant.net.OperatorOption
+import com.tencent.mm.assistant.util.LastChoiceMemory
 import com.tencent.mm.assistant.util.SafeLogger
 import com.tencent.mm.assistant.util.SettingsStore
 
@@ -71,22 +73,89 @@ class HintOverlayManager(
     private var lastResponse: CenterResponse? = null
     private var lastTitle: String? = null
 
-    /** 最近一次资料页上下文（微信号/昵称/标签/地区），供一键建档回传。 */
+    /** 最近一次资料页上下文（微信号/昵称/标签/地区），供一键建档/补录手机号回传。 */
     private var profileContext: ProfileContext? = null
+
+    // ---------------------------------------------------------------- 常驻悬浮球（WP-27）
+
+    /** 员工点击悬浮球：由读屏服务根据当前页发起 open 请求。 */
+    private var onBallClick: (() -> Unit)? = null
+
+    private var ballView: FloatingBallView? = null
+    private var ballParams: WindowManager.LayoutParams? = null
+    private var panelVisible = false
+    private var lastBadge: String = FloatingBallBadge.NONE
+    private var lastHealthy = true
+    private var idleRunnable: Runnable? = null
+
+    fun setOnBallClick(action: () -> Unit) {
+        onBallClick = action
+    }
 
     /** 记录最近一次资料页上下文（由 WeChatReadService 在人工打开资料页时调用）。 */
     fun rememberProfileContext(context: ProfileContext) {
         mainHandler.post { profileContext = context }
     }
 
-    // ---------------------------------------------------------------- 展示
-
-    fun show(response: CenterResponse, sessionKey: String, title: String?) {
-        if (response.action == CenterAction.NONE) return
-        mainHandler.post { showInternal(response, sessionKey, title) }
+    /** 展示/刷新常驻悬浮球（仅在微信前台调用）。 */
+    fun showBall(healthy: Boolean) {
+        mainHandler.post {
+            lastHealthy = healthy
+            if (panelVisible) return@post
+            if (!ensureBall()) return@post
+            ballView?.setHealthy(healthy)
+            ballView?.setBadge(lastBadge)
+            scheduleIdle()
+        }
     }
 
-    private fun showInternal(response: CenterResponse, sessionKey: String, title: String?) {
+    /** 更新角标（peek 响应）并保持健康。 */
+    fun updateBadge(badge: String?, healthy: Boolean = true) {
+        mainHandler.post {
+            lastBadge = FloatingBallBadge.normalize(badge)
+            lastHealthy = healthy
+            if (panelVisible) return@post
+            if (!ensureBall()) return@post
+            ballView?.setHealthy(healthy)
+            ballView?.setBadge(lastBadge)
+            scheduleIdle()
+        }
+    }
+
+    /** 离开微信前台：立即移除悬浮球与面板（零隐私残留）。 */
+    fun hideAll() {
+        mainHandler.post {
+            removePanelInternal()
+            removeBallInternal()
+            panelVisible = false
+        }
+    }
+
+    fun isPanelVisible(): Boolean = panelVisible
+
+    // ---------------------------------------------------------------- 展示
+
+    /** 兼容旧调用：peek 只更新角标；其余动作展开面板。 */
+    fun show(response: CenterResponse, sessionKey: String, title: String?, pageType: String = "chat") {
+        if (response.action == CenterAction.NONE) return
+        if (response.action == CenterAction.PEEK) {
+            updateBadge(response.badge)
+            return
+        }
+        expandPanel(response, sessionKey, title, pageType)
+    }
+
+    /** 员工点击悬浮球后展开场景化二级面板。 */
+    fun expandPanel(response: CenterResponse, sessionKey: String, title: String?, pageType: String = "chat") {
+        mainHandler.post { expandInternal(response, sessionKey, title, pageType) }
+    }
+
+    /** 收起面板，回到小悬浮球。 */
+    fun collapsePanel() {
+        mainHandler.post { collapseInternal() }
+    }
+
+    private fun expandInternal(response: CenterResponse, sessionKey: String, title: String?, pageType: String) {
         val wm = windowManager ?: appContext.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
         if (wm == null) {
             logger.event("overlay_no_wm")
@@ -99,10 +168,10 @@ class HintOverlayManager(
             return
         }
 
-        removeInternal()
+        removePanelInternal()
+        removeBallInternal()
 
-        // WP-26：在岚时建档成功后，中控下发 ` #<档案号>`，这里自动写入系统剪贴板，
-        // 员工退回微信点备注即可直接粘贴（粘贴仍由人工完成，App 绝不触发）。
+        // 岚时建档成功后中控下发 ` #<档案号>`：自动写入系统剪贴板（粘贴仍由人工完成）。
         response.autoCopyText?.trim()?.takeIf { it.isNotEmpty() }?.let { text ->
             copyToClipboard(
                 text,
@@ -111,16 +180,17 @@ class HintOverlayManager(
         }
 
         val metrics = appContext.resources.displayMetrics
-        val panelHeight = (metrics.heightPixels * HEIGHT_RATIO).toInt()
+        val heightRatio = if (response.action == CenterAction.PREPARE_HIS_CREATE) PREPARE_HEIGHT_RATIO else HEIGHT_RATIO
+        val panelHeight = (metrics.heightPixels * heightRatio).toInt()
 
-        val view = buildView(response, panelHeight)
+        val view = buildView(response, panelHeight, pageType)
             ?: run {
                 logger.event("overlay_build_failed")
                 return
             }
 
         val params = WindowManager.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,   // 满屏宽
+            ViewGroup.LayoutParams.MATCH_PARENT,
             panelHeight,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -143,22 +213,143 @@ class HintOverlayManager(
         currentSessionKey = sessionKey
         lastResponse = response
         lastTitle = title
+        panelVisible = true
         logger.event("overlay_shown")
 
+        // 建档成功自动收起面板回到小悬浮球（角标变「档」）。
+        if (!response.autoCopyText.isNullOrBlank()) {
+            lastBadge = FloatingBallBadge.ARCHIVED
+            mainHandler.postDelayed({ collapseInternal() }, AUTO_COLLAPSE_MS)
+            return
+        }
+
         if (response.action == CenterAction.NO_MATCH) {
-            val r = Runnable { dismiss() }
+            val r = Runnable { collapseInternal() }
             autoDismissRunnable = r
             mainHandler.postDelayed(r, AUTO_DISMISS_MS)
         }
     }
 
+    private fun collapseInternal() {
+        removePanelInternal()
+        panelVisible = false
+        if (!ensureBall()) return
+        ballView?.setHealthy(lastHealthy)
+        ballView?.setBadge(lastBadge)
+        scheduleIdle()
+    }
+
+    // ---------------------------------------------------------------- 悬浮球生命周期
+
+    private fun ensureBall(): Boolean {
+        if (ballView != null) return true
+        val wm = windowManager ?: appContext.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return false
+        if (!hasOverlayPermission()) {
+            logger.event("overlay_no_permission")
+            return false
+        }
+        windowManager = wm
+        val ball = FloatingBallView(appContext)
+        ball.setBadge(lastBadge)
+        ball.setHealthy(lastHealthy)
+        ball.onTap = {
+            resetIdle()
+            onBallClick?.invoke()
+        }
+        ball.onDrag = { dx, dy, end -> moveBall(dx, dy, end) }
+
+        val metrics = appContext.resources.displayMetrics
+        val size = dp(BALL_SIZE_DP)
+        val defaultY = (metrics.heightPixels * DEFAULT_BALL_Y_RATIO).toInt()
+        val y = (if (settings.floatingBallY >= 0) settings.floatingBallY else defaultY)
+            .coerceIn(0, (metrics.heightPixels - size).coerceAtLeast(0))
+        val params = WindowManager.LayoutParams(
+            size,
+            size,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = (metrics.widthPixels - size - dp(4)).coerceAtLeast(0)
+            this.y = y
+        }
+        return try {
+            wm.addView(ball, params)
+            ballView = ball
+            ballParams = params
+            scheduleIdle()
+            true
+        } catch (_: Throwable) {
+            logger.event("ball_add_failed")
+            false
+        }
+    }
+
+    private fun moveBall(dx: Float, dy: Float, end: Boolean) {
+        val wm = windowManager ?: return
+        val ball = ballView ?: return
+        val params = ballParams ?: return
+        val metrics = appContext.resources.displayMetrics
+        val size = dp(BALL_SIZE_DP)
+        if (!end) {
+            params.x = (params.x + dx.toInt()).coerceIn(0, (metrics.widthPixels - size).coerceAtLeast(0))
+            params.y = (params.y + dy.toInt()).coerceIn(0, (metrics.heightPixels - size).coerceAtLeast(0))
+            try {
+                wm.updateViewLayout(ball, params)
+            } catch (_: Throwable) {
+                // 窗口已失效：忽略
+            }
+            resetIdle()
+            return
+        }
+        // 松手磁吸到较近的一侧，并记住 Y 坐标。
+        val margin = dp(4)
+        params.x = if (params.x + size / 2 < metrics.widthPixels / 2) margin else (metrics.widthPixels - size - margin)
+        params.y = params.y.coerceIn(0, (metrics.heightPixels - size).coerceAtLeast(0))
+        settings.floatingBallY = params.y
+        try {
+            wm.updateViewLayout(ball, params)
+        } catch (_: Throwable) {
+            // 窗口已失效：忽略
+        }
+        scheduleIdle()
+    }
+
+    private fun removeBallInternal() {
+        idleRunnable?.let { mainHandler.removeCallbacks(it) }
+        idleRunnable = null
+        val ball = ballView ?: return
+        ballView = null
+        ballParams = null
+        try {
+            windowManager?.removeView(ball)
+        } catch (_: Throwable) {
+            // 视图已被移除：忽略
+        }
+    }
+
+    private fun scheduleIdle() {
+        idleRunnable?.let { mainHandler.removeCallbacks(it) }
+        val task = Runnable { ballView?.applyAlpha(idle = true, panelOpen = panelVisible) }
+        idleRunnable = task
+        mainHandler.postDelayed(task, IDLE_ALPHA_MS)
+    }
+
+    private fun resetIdle() {
+        idleRunnable?.let { mainHandler.removeCallbacks(it) }
+        ballView?.applyAlpha(idle = false, panelOpen = panelVisible)
+        scheduleIdle()
+    }
+
     // ---------------------------------------------------------------- 关闭
 
     fun dismiss() {
-        mainHandler.post { removeInternal() }
+        mainHandler.post { collapseInternal() }
     }
 
-    private fun removeInternal() {
+    private fun removePanelInternal() {
         autoDismissRunnable?.let { mainHandler.removeCallbacks(it) }
         autoDismissRunnable = null
         val view = currentView ?: return
@@ -166,6 +357,7 @@ class HintOverlayManager(
         currentSessionKey = null
         lastResponse = null
         lastTitle = null
+        panelVisible = false
         try {
             windowManager?.removeView(view)
         } catch (_: Throwable) {
@@ -176,7 +368,7 @@ class HintOverlayManager(
 
     // ---------------------------------------------------------------- 视图构建
 
-    private fun buildView(response: CenterResponse, panelHeight: Int): View? {
+    private fun buildView(response: CenterResponse, panelHeight: Int, pageType: String): View? {
         val root = LinearLayout(appContext).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(8), dp(12), dp(8))
@@ -196,8 +388,10 @@ class HintOverlayManager(
             titleView(titleFor(response)),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
-        // WP-26：顶栏固定显示两个独立复制按钮（仅当提示里含 `#档案号`）。
-        HintCopyHelper.extractDossierNo(response.hint)?.let { dossierNo ->
+        // WP-26/27：顶栏固定显示两个独立复制按钮（hint 或结构化 archive 里含档案号时）。
+        val headerDossierNo = HintCopyHelper.extractDossierNo(response.hint)
+            ?: response.archive?.customerNo?.takeIf { it.isNotBlank() }
+        headerDossierNo?.let { dossierNo ->
             header.addView(
                 smallButton(appContext.getString(R.string.overlay_btn_copy_dossier_no)) {
                     copyToClipboard(
@@ -215,22 +409,21 @@ class HintOverlayManager(
                 },
             )
         }
-        header.addView(smallButton(appContext.getString(R.string.overlay_btn_close)) { dismiss() })
+        header.addView(smallButton(appContext.getString(R.string.overlay_btn_collapse)) { collapsePanel() })
+        header.addView(smallButton(appContext.getString(R.string.overlay_btn_close)) { collapsePanel() })
         root.addView(header)
 
         // 中间：可滚动的条目列表
         val list = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
         when (response.action) {
             CenterAction.SHOW_HINT -> {
-                // 提示按行拆成"一条条"：话术行只复制剥离前缀后的正文，状态行不渲染复制按钮。
-                val hint = response.hint ?: appContext.getString(R.string.overlay_empty_hint)
-                val items = hint.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
-                if (items.isEmpty()) {
-                    list.addView(rowView(hint, HintCopyHelper.copyableRowText(hint)))
-                } else {
-                    items.forEach { line ->
-                        list.addView(rowView(line, HintCopyHelper.copyableRowText(line)))
+                when {
+                    pageType == "chat" -> list.addView(chatTabs(response))
+                    response.archive != null -> {
+                        list.addView(assetView(response))
+                        appendHintRows(list, response)
                     }
+                    else -> appendHintRows(list, response)
                 }
             }
 
@@ -251,6 +444,9 @@ class HintOverlayManager(
             CenterAction.NO_MATCH -> {
                 list.addView(rowView(appContext.getString(R.string.overlay_no_match_body)))
             }
+
+            // peek 只更新角标，永不构建面板。
+            CenterAction.PEEK -> return null
 
             CenterAction.NONE -> return null
         }
@@ -278,11 +474,183 @@ class HintOverlayManager(
         return root
     }
 
+    // ---------------------------------------------------------------- 二级面板内容（WP-27）
+
+    /** 把 hint 按行拆成可复制条目（话术行只复制正文，状态行无复制按钮）。 */
+    private fun appendHintRows(list: LinearLayout, response: CenterResponse) {
+        val hint = response.hint ?: appContext.getString(R.string.overlay_empty_hint)
+        val items = hint.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+        if (items.isEmpty()) {
+            list.addView(rowView(hint, HintCopyHelper.copyableRowText(hint)))
+            return
+        }
+        items.forEach { line ->
+            list.addView(rowView(line, HintCopyHelper.copyableRowText(line)))
+        }
+    }
+
+    /** 单聊页二级 Tab：档案与资产 / 补录手机号 / 跟进话术。 */
+    private fun chatTabs(response: CenterResponse): View {
+        val wrap = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
+        val tabRow = LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, dp(4))
+        }
+        val content = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
+        fun select(index: Int) {
+            content.removeAllViews()
+            when (index) {
+                0 -> content.addView(assetView(response))
+                1 -> content.addView(phonePanel(response))
+                else -> content.addView(scriptPanel(response))
+            }
+        }
+        listOf(R.string.overlay_tab_asset, R.string.overlay_tab_phone, R.string.overlay_tab_script)
+            .forEachIndexed { index, resId ->
+                tabRow.addView(
+                    smallButton(appContext.getString(resId)) { select(index) },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                )
+            }
+        wrap.addView(tabRow)
+        wrap.addView(content)
+        select(0)
+        return wrap
+    }
+
+    /** 档案与资产卡（结构化 archive 优先，缺失时退回 hint 文本）。 */
+    private fun assetView(response: CenterResponse): View {
+        val wrap = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
+        val archive = response.archive
+        if (archive == null) {
+            wrap.addView(rowView(appContext.getString(R.string.overlay_asset_no_archive), null))
+            appendHintRows(wrap, response)
+            return wrap
+        }
+        wrap.addView(rowView(appContext.getString(R.string.overlay_asset_no_fmt, archive.customerNo), archive.customerNo))
+        wrap.addView(rowView(appContext.getString(R.string.overlay_asset_name_fmt, archive.name), null))
+        archive.vipGrade?.takeIf { it.isNotBlank() }?.let {
+            wrap.addView(rowView(appContext.getString(R.string.overlay_asset_vip_fmt, it), null))
+        }
+        if (archive.seats.isNotEmpty()) {
+            val seats = archive.seats.joinToString(" · ") { seat ->
+                appContext.getString(R.string.overlay_seat_fmt, roleLabel(seat.role), seat.name)
+            }
+            wrap.addView(rowView(appContext.getString(R.string.overlay_asset_seats_fmt, seats), null))
+        }
+        val deposit = archive.depositBalance?.takeIf { it.isNotBlank() } ?: "0"
+        wrap.addView(rowView(appContext.getString(R.string.overlay_asset_points_fmt, archive.availablePoints, deposit), null))
+        archive.phoneMask?.takeIf { it.isNotBlank() }?.let {
+            wrap.addView(rowView(appContext.getString(R.string.overlay_asset_phone_fmt, it), null))
+        }
+        archive.lastVisitAt?.takeIf { it.isNotBlank() }?.let {
+            wrap.addView(rowView(appContext.getString(R.string.overlay_asset_visit_fmt, it), null))
+        }
+        val actions = LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(4), 0, 0)
+        }
+        actions.addView(
+            smallButton(appContext.getString(R.string.overlay_btn_copy_dossier_no)) {
+                copyToClipboard(
+                    archive.customerNo,
+                    appContext.getString(R.string.overlay_copied_dossier_no_fmt, archive.customerNo),
+                )
+            },
+        )
+        actions.addView(
+            smallButton(appContext.getString(R.string.overlay_btn_copy_remark_code)) {
+                copyToClipboard(
+                    " #${archive.customerNo}",
+                    appContext.getString(R.string.overlay_copied_remark_code_fmt, " #${archive.customerNo}"),
+                )
+            },
+        )
+        wrap.addView(actions)
+        return wrap
+    }
+
+    /** 一键补录岚时主/备手机号。 */
+    private fun phonePanel(response: CenterResponse): View {
+        val wrap = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
+        val phone = response.pendingPhone
+        if (phone.isNullOrBlank()) {
+            wrap.addView(rowView(appContext.getString(R.string.overlay_phone_none), null))
+            return wrap
+        }
+        val mainSlot = response.phoneSlot != "spare"
+        val mask = response.pendingMask?.takeIf { it.isNotBlank() } ?: phone
+        val label = appContext.getString(
+            if (mainSlot) R.string.overlay_btn_supplement_main_fmt else R.string.overlay_btn_supplement_spare_fmt,
+            mask,
+        )
+        val button = Button(appContext).apply {
+            text = label
+            textSize = 12f
+            isAllCaps = false
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            setTextColor(Color.WHITE)
+            setBackgroundColor(if (mainSlot) 0xFF1565C0.toInt() else 0xFF6A1B9A.toInt())
+            setOnClickListener {
+                isEnabled = false
+                text = appContext.getString(R.string.overlay_btn_submitting)
+                sendSupplementFeedback(response, phone)
+            }
+        }
+        wrap.addView(
+            button,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        wrap.addView(rowView(appContext.getString(R.string.overlay_phone_conflict_tip), null))
+        return wrap
+    }
+
+    /** 跟进话术（只读，纯话术正文复制）。 */
+    private fun scriptPanel(response: CenterResponse): View {
+        val wrap = LinearLayout(appContext).apply { orientation = LinearLayout.VERTICAL }
+        appendHintRows(wrap, response)
+        return wrap
+    }
+
+    private fun sendSupplementFeedback(response: CenterResponse, phone: String) {
+        val feedback = CandidateFeedback(
+            requestId = response.requestId,
+            serviceAccountId = settings.serviceAccountId,
+            deviceId = settings.deviceId,
+            title = lastTitle,
+            label = "supplement_his_phone",
+            candidateIndex = 0,
+            accepted = true,
+            ts = System.currentTimeMillis(),
+            event = "supplement_his_phone",
+            contactWechatId = profileContext?.contactWechatId,
+            profileNickname = profileContext?.profileNickname,
+            profileTags = profileContext?.profileTags ?: emptyList(),
+            profileRegion = profileContext?.profileRegion,
+            phone = phone,
+        )
+        centerClient.feedback(feedback)
+    }
+
+    private fun roleLabel(role: String): String = when (role) {
+        "develop" -> "开发"
+        "traffic_ops" -> "运营"
+        "counselor" -> "顾问"
+        "doctor" -> "医生"
+        "butler" -> "管家"
+        "nurse" -> "护士"
+        else -> role
+    }
+
+
     private fun titleFor(response: CenterResponse): String = when (response.action) {
         CenterAction.SHOW_HINT -> appContext.getString(R.string.overlay_title_hint)
         CenterAction.SHOW_CANDIDATES -> appContext.getString(R.string.overlay_title_candidates)
         CenterAction.NO_MATCH -> appContext.getString(R.string.overlay_title_no_match)
         CenterAction.PREPARE_HIS_CREATE -> appContext.getString(R.string.overlay_title_prepare_his)
+        CenterAction.PEEK -> ""
         CenterAction.NONE -> ""
     }
 
@@ -414,6 +782,12 @@ class HintOverlayManager(
         }
 
         val primary = options.firstOrNull { it.recommended } ?: options.first()
+        // WP-27：引流运营选择（默认「无运营」，优先恢复本机上次选择）。
+        val operators = response.operatorOptions
+        var selectedOperator: OperatorOption? = operators.firstOrNull()
+        LastChoiceMemory.decodeOperator(settings.lastOperatorRaw)?.let { last ->
+            operators.firstOrNull { it.id == last.id && it.name == last.name }?.let { selectedOperator = it }
+        }
         val primaryButton = Button(appContext).apply {
             text = appContext.getString(R.string.overlay_btn_create_his_fmt, primary.label)
             textSize = 13f
@@ -426,7 +800,7 @@ class HintOverlayManager(
             setOnClickListener {
                 isEnabled = false
                 text = appContext.getString(R.string.overlay_btn_creating_his)
-                sendCreateFeedback(response, primary, options.indexOf(primary))
+                sendCreateFeedback(response, primary, options.indexOf(primary), selectedOperator)
             }
         }
         wrap.addView(
@@ -459,7 +833,7 @@ class HintOverlayManager(
                     setOnClickListener {
                         isEnabled = false
                         text = appContext.getString(R.string.overlay_btn_creating_his)
-                        sendCreateFeedback(response, channel, options.indexOf(channel))
+                        sendCreateFeedback(response, channel, options.indexOf(channel), selectedOperator)
                     }
                 }
                 row.addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -467,13 +841,83 @@ class HintOverlayManager(
             wrap.addView(row)
             index += 2
         }
+
+        // 引流运营（写入岚时 belongServiceId + 中枢 traffic_ops 席位）。
+        wrap.addView(
+            TextView(appContext).apply {
+                text = appContext.getString(R.string.overlay_operator_title)
+                setTextColor(0xFFE8E8E8.toInt())
+                textSize = 12f
+                setPadding(0, dp(6), 0, dp(2))
+            },
+        )
+        val operatorStatus = TextView(appContext).apply {
+            text = appContext.getString(
+                R.string.overlay_operator_selected_fmt,
+                selectedOperator?.name ?: appContext.getString(R.string.overlay_operator_none),
+            )
+            setTextColor(0xFFB0BEC5.toInt())
+            textSize = 11f
+        }
+        wrap.addView(operatorStatus)
+        val chips = operators.take(9)
+        var chipIndex = 0
+        while (chipIndex < chips.size) {
+            val row = LinearLayout(appContext).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(2), 0, 0)
+            }
+            for (slot in 0..2) {
+                val position = chipIndex + slot
+                if (position >= chips.size) {
+                    row.addView(View(appContext), LinearLayout.LayoutParams(0, 1, 1f))
+                    continue
+                }
+                val operator = chips[position]
+                val label = operator.name.ifBlank { appContext.getString(R.string.overlay_operator_none) }
+                val button = Button(appContext).apply {
+                    text = label
+                    textSize = 10f
+                    isAllCaps = false
+                    minWidth = 0
+                    minimumWidth = 0
+                    setPadding(dp(2), dp(2), dp(2), dp(2))
+                    setOnClickListener {
+                        selectedOperator = operator
+                        operatorStatus.text = appContext.getString(R.string.overlay_operator_selected_fmt, label)
+                    }
+                }
+                row.addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            wrap.addView(row)
+            chipIndex += 3
+        }
+        wrap.addView(
+            TextView(appContext).apply {
+                text = appContext.getString(R.string.overlay_operator_meituan_locked)
+                setTextColor(0xFFFFB74D.toInt())
+                textSize = 10f
+                setPadding(0, dp(2), 0, 0)
+            },
+        )
         return wrap
     }
 
     /** 员工点选渠道后发送建档反馈（唯一会触发岚时建档的入口）。 */
-    private fun sendCreateFeedback(response: CenterResponse, channel: ChannelOption, index: Int) {
+    private fun sendCreateFeedback(
+        response: CenterResponse,
+        channel: ChannelOption,
+        index: Int,
+        operator: OperatorOption?,
+    ) {
         val context = profileContext
         val draft = response.hisDraft
+        // 记忆上次所选渠道/运营（只存名称，不存任何聊天内容）。
+        settings.lastChannelRaw = LastChoiceMemory.encodeChannel(channel.sourceOne, channel.sourceTwo)
+        val effectiveOperator = if (isMeituanChannel(channel)) null else operator
+        if (effectiveOperator != null) {
+            settings.lastOperatorRaw = LastChoiceMemory.encodeOperator(effectiveOperator.id, effectiveOperator.name)
+        }
         val feedback = CandidateFeedback(
             requestId = response.requestId,
             serviceAccountId = settings.serviceAccountId,
@@ -490,9 +934,17 @@ class HintOverlayManager(
             profileNickname = context?.profileNickname ?: draft?.customerName,
             profileTags = context?.profileTags ?: draft?.matchedTags ?: emptyList(),
             profileRegion = context?.profileRegion,
+            belongServiceId = effectiveOperator?.id?.takeIf { it.isNotBlank() },
+            belongServiceName = effectiveOperator?.name?.takeIf { it.isNotBlank() },
         )
         centerClient.feedback(feedback)
     }
+
+    /** 美团/大众点评渠道不挂运营（与后端硬锁一致，避免渠道业绩串档）。 */
+    private fun isMeituanChannel(channel: ChannelOption): Boolean =
+        channel.sourceTwo.contains("美团") ||
+            channel.sourceTwo.contains("大众点评") ||
+            channel.sourceOne.contains("美团")
 
 
     private fun copyButton(text: String): Button =
@@ -614,8 +1066,22 @@ class HintOverlayManager(
         /** 面板高度：屏高 1/3（贴顶部）。 */
         const val HEIGHT_RATIO = 1f / 3f
 
+        /** 待建岚时面板需要展示渠道 + 运营，给到 52% 屏高。 */
+        const val PREPARE_HEIGHT_RATIO = 0.52f
+
+        /** 悬浮球窗口尺寸（内部圆球 44dp，外层留角标空间）。 */
+        const val BALL_SIZE_DP = 52
+
+        /** 悬浮球默认停在屏幕右侧 35% 高度，避开输入法与发送键。 */
+        const val DEFAULT_BALL_Y_RATIO = 0.35f
+
+        /** 无角标闲置 4 秒后降为 45% 不透明度。 */
+        const val IDLE_ALPHA_MS = 4_000L
+
+        /** 建档成功后自动收起面板回到小悬浮球。 */
+        const val AUTO_COLLAPSE_MS = 900L
+
         /** no_match 自动关闭延时。 */
         const val AUTO_DISMISS_MS = 5_000L
-
     }
 }

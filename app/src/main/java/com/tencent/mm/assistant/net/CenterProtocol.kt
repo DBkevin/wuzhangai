@@ -49,6 +49,13 @@ data class ReadReport(
     val profileTags: List<String> = emptyList(),
     /** 资料页已展示的地区文本（WP-26）。 */
     val profileRegion: String? = null,
+    /**
+     * WP-27 请求模式：
+     *   * `peek` —— 轻量角标快检，仅更新悬浮球角标；
+     *   * `open_profile` / `open_chat` —— 员工主动点击悬浮球展开完整面板。
+     * 为空时保持 WP-26 的旧语义（服务端按 page_type 处理）。
+     */
+    val mode: String? = null,
 ) {
     fun toJson(): String {
         val root = JSONObject()
@@ -71,6 +78,7 @@ data class ReadReport(
         profileTags.forEach { tagArr.put(it) }
         root.put("profile_tags", tagArr)
         root.put("profile_region", profileRegion ?: JSONObject.NULL)
+        root.put("mode", mode ?: JSONObject.NULL)
         return root.toString()
     }
 
@@ -89,6 +97,9 @@ enum class CenterAction(val wireValue: String) {
 
     /** WP-26：岚时未建档，悬浮窗渲染「一键选渠道建入岚时」面板。 */
     PREPARE_HIS_CREATE("prepare_his_create"),
+
+    /** WP-27：轻量角标快检（不展开面板，仅更新悬浮球角标）。 */
+    PEEK("peek"),
     ;
 
     companion object {
@@ -118,6 +129,34 @@ data class ChannelOption(
     val recommended: Boolean,
 )
 
+/** 引流运营（岚时所属客服）候选。id 为空表示「无运营（自然/美团）」。 */
+data class OperatorOption(
+    val id: String,
+    val name: String,
+)
+
+/** 档案归属席位。 */
+data class ArchiveSeat(
+    val role: String,
+    val name: String,
+)
+
+/** 悬浮球面板「档案与资产」结构化数据（中控已脱敏）。 */
+data class ArchiveCard(
+    val customerNo: String,
+    val name: String,
+    val vipGrade: String?,
+    val stage: String?,
+    val protectStatus: String?,
+    val availablePoints: String,
+    val frozenPoints: String?,
+    val depositBalance: String?,
+    val phoneMask: String?,
+    val seats: List<ArchiveSeat>,
+    val lastVisitAt: String?,
+    val hisBound: Boolean,
+)
+
 data class Candidate(
     val label: String,
     val confidence: Double,
@@ -135,6 +174,16 @@ data class CenterResponse(
     val channelOptions: List<ChannelOption> = emptyList(),
     /** WP-26：建档成功后中控下发 ` #<档案号>`，安卓自动写入系统剪贴板。 */
     val autoCopyText: String? = null,
+    /** WP-27：轻量 peek 角标（conflict / phone / archived / 空）。 */
+    val badge: String? = null,
+    /** WP-27：建档面板的引流运营候选（首项 id 为空 = 无运营）。 */
+    val operatorOptions: List<OperatorOption> = emptyList(),
+    /** WP-27：单聊/资料页面板的结构化档案资产卡。 */
+    val archive: ArchiveCard? = null,
+    /** WP-27：可一键补录的手机号（脱敏）与槽位（main / spare）。 */
+    val pendingPhone: String? = null,
+    val pendingMask: String? = null,
+    val phoneSlot: String? = null,
 ) {
     companion object {
         /** 越界防御：候选最多 3 条，避免悬浮窗被超长内容撑爆。 */
@@ -160,6 +209,9 @@ data class CenterResponse(
 
         /** auto_copy_text 上限（` #` + 13 位档案号，留足余量）。 */
         private const val MAX_COPY_TEXT = 32
+
+        /** 引流运营候选上限（中控已截断到 30，这里再兜一层）。 */
+        private const val MAX_OPERATORS = 30
 
         fun parse(json: String): CenterResponse? = try {
             val root = JSONObject(json)
@@ -191,6 +243,12 @@ data class CenterResponse(
                 hisDraft = parseHisDraft(root.optJSONObject("his_draft")),
                 channelOptions = parseChannelOptions(root.optJSONArray("channel_options")),
                 autoCopyText = root.optStringOrNull("auto_copy_text")?.take(MAX_COPY_TEXT),
+                badge = root.optStringOrNull("badge")?.take(MAX_TEXT),
+                operatorOptions = parseOperatorOptions(root.optJSONArray("operator_options")),
+                archive = parseArchive(root.optJSONObject("archive")),
+                pendingPhone = root.optStringOrNull("pending_phone")?.take(MAX_TEXT),
+                pendingMask = root.optStringOrNull("pending_mask")?.take(MAX_TEXT),
+                phoneSlot = root.optStringOrNull("phone_slot")?.take(MAX_TEXT),
             )
         } catch (_: Exception) {
             null
@@ -247,6 +305,59 @@ data class CenterResponse(
             return out
         }
 
+        private fun parseOperatorOptions(arr: JSONArray?): List<OperatorOption> {
+            if (arr == null) return emptyList()
+            val out = ArrayList<OperatorOption>(MAX_OPERATORS)
+            var i = 0
+            while (i < arr.length() && out.size < MAX_OPERATORS) {
+                val item = arr.optJSONObject(i)
+                i++
+                if (item == null) continue
+                val name = item.optStringOrNull("name")?.take(MAX_TEXT) ?: continue
+                out.add(
+                    OperatorOption(
+                        id = item.optStringOrNull("id")?.take(MAX_TEXT).orEmpty(),
+                        name = name,
+                    )
+                )
+            }
+            return out
+        }
+
+        private fun parseArchive(obj: JSONObject?): ArchiveCard? {
+            if (obj == null) return null
+            val seats = ArrayList<ArchiveSeat>(6)
+            obj.optJSONArray("seats")?.let { arr ->
+                var i = 0
+                while (i < arr.length() && seats.size < 6) {
+                    val item = arr.optJSONObject(i)
+                    i++
+                    if (item == null) continue
+                    val name = item.optStringOrNull("name")?.take(MAX_TEXT) ?: continue
+                    seats.add(
+                        ArchiveSeat(
+                            role = item.optStringOrNull("role")?.take(MAX_TEXT).orEmpty(),
+                            name = name,
+                        )
+                    )
+                }
+            }
+            return ArchiveCard(
+                customerNo = obj.optStringOrNull("customer_no")?.take(MAX_TEXT).orEmpty(),
+                name = obj.optStringOrNull("name")?.take(MAX_TEXT).orEmpty(),
+                vipGrade = obj.optStringOrNull("vip_grade")?.take(MAX_TEXT),
+                stage = obj.optStringOrNull("stage")?.take(MAX_TEXT),
+                protectStatus = obj.optStringOrNull("protect_status")?.take(MAX_TEXT),
+                availablePoints = obj.optStringOrNull("available_points")?.take(MAX_TEXT) ?: "0",
+                frozenPoints = obj.optStringOrNull("frozen_points")?.take(MAX_TEXT),
+                depositBalance = obj.optStringOrNull("deposit_balance")?.take(MAX_TEXT),
+                phoneMask = obj.optStringOrNull("phone_mask")?.take(MAX_TEXT),
+                seats = seats,
+                lastVisitAt = obj.optStringOrNull("last_visit_at")?.take(MAX_TEXT),
+                hisBound = obj.optBoolean("his_bound", false),
+            )
+        }
+
         private fun JSONObject.optStringOrNull(key: String): String? {
             if (!has(key) || isNull(key)) return null
             val v = optString(key, "")
@@ -274,6 +385,11 @@ data class CandidateFeedback(
     val profileNickname: String? = null,
     val profileTags: List<String> = emptyList(),
     val profileRegion: String? = null,
+    /** WP-27：一键补录手机号的明文（仅本次回传，App 不留存）。 */
+    val phone: String? = null,
+    /** WP-27：引流运营（岚时 serviceList UUID）与姓名。 */
+    val belongServiceId: String? = null,
+    val belongServiceName: String? = null,
 ) {
     fun toJson(): String {
         val root = JSONObject()
@@ -295,6 +411,9 @@ data class CandidateFeedback(
         val tagArr = JSONArray()
         profileTags.forEach { tagArr.put(it) }
         root.put("profile_tags", tagArr)
+        root.put("phone", phone ?: JSONObject.NULL)
+        root.put("belong_service_id", belongServiceId ?: JSONObject.NULL)
+        root.put("belong_service_name", belongServiceName ?: JSONObject.NULL)
         return root.toString()
     }
 }
